@@ -86,6 +86,25 @@ h3{font-size:clamp(1.05rem,3.5vw,1.3rem);font-weight:700}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
 @keyframes confettiFall{0%{opacity:1;transform:translateY(0) rotate(0)}100%{opacity:0;transform:translateY(110vh) rotate(720deg)}}
 @media(max-width:400px){.app{padding:10px}.card{padding:16px}.pgrid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px}}
+.rl-book{background:#fff;border-radius:16px;padding:16px;margin-bottom:10px;box-shadow:0 2px 12px rgba(26,46,74,.06);animation:fadeUp .3s;transition:all .15s;display:flex;align-items:flex-start;gap:12px}
+.rl-book:hover{box-shadow:0 4px 16px rgba(26,46,74,.1)}
+.rl-check{width:28px;height:28px;border-radius:8px;border:2.5px solid #ccc;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:.9rem;transition:all .15s;margin-top:2px}
+.rl-check.done{background:var(--mint);border-color:var(--mint);color:#fff}
+.rl-check.reading{background:#e8f4fd;border-color:var(--blue);color:var(--blue)}
+.rl-progress{display:flex;gap:6px;margin-top:6px}
+.rl-pip{padding:4px 10px;border-radius:12px;font-size:.72rem;font-weight:700;cursor:pointer;border:2px solid #e0e4ea;background:#fff;transition:all .15s;font-family:'Nunito',sans-serif}
+.rl-pip:hover{border-color:var(--blue)}
+.rl-pip.on-notstarted{border-color:var(--muted);background:#f5f5f5;color:var(--muted)}
+.rl-pip.on-reading{border-color:var(--blue);background:#e8f4fd;color:var(--blue)}
+.rl-pip.on-finished{border-color:var(--mint);background:#e0faf0;color:#06a77d}
+.rl-free{display:inline-block;padding:2px 8px;border-radius:8px;font-size:.68rem;font-weight:700;background:#e0faf0;color:#06a77d;margin-left:6px}
+.rl-stat{display:flex;gap:12px;margin-bottom:16px}
+.rl-stat-card{flex:1;background:#fff;border-radius:14px;padding:14px;text-align:center;box-shadow:0 2px 10px rgba(26,46,74,.06)}
+.rl-stat-num{font-family:'Baloo 2',cursive;font-size:1.5rem;font-weight:800;color:var(--navy)}
+.rl-stat-lbl{font-size:.72rem;color:var(--muted);font-weight:600}
+.print-only{display:none}
+@media print{.no-print{display:none!important}.print-only{display:block!important}.app{padding:0;max-width:100%}.rl-book{box-shadow:none;border:1px solid #ddd;break-inside:avoid}.rl-pip,.rl-check{border-color:#999!important}}
+
 </style>
 </head>
 <body>
@@ -94,7 +113,40 @@ h3{font-size:clamp(1.05rem,3.5vw,1.3rem);font-weight:700}
 import{createElement as h,useState,useEffect,useRef,useCallback}from"https://esm.sh/react@18.2.0";
 import{createRoot}from"https://esm.sh/react-dom@18.2.0/client";
 import htm from"https://esm.sh/htm@3.1.1";
+import{initializeApp}from"https://www.gstatic.com/firebasejs/12.10.0/firebase-app.js";
+import{getFirestore,doc,getDoc,setDoc,deleteDoc}from"https://www.gstatic.com/firebasejs/12.10.0/firebase-firestore.js";
 const html=htm.bind(h);
+
+// ===== FIREBASE CONFIG =====
+const FIREBASE_CONFIG={
+  apiKey:"AIzaSyCxqGRhdCyh92LyiFvrTi6ETTiFKVhDvUM",
+  authDomain:"homeschool-math.firebaseapp.com",
+  projectId:"homeschool-math",
+  storageBucket:"homeschool-math.firebasestorage.app",
+  messagingSenderId:"275309549483",
+  appId:"1:275309549483:web:3c118499f22eb23e6f24ee"
+};
+let db=null;
+try{const app=initializeApp(FIREBASE_CONFIG);db=getFirestore(app);console.log("Firebase connected")}catch(e){console.warn("Firebase init failed:",e)}
+
+// ===== FIREBASE SYNC ENGINE =====
+const fbLoad=async(code,retries=3)=>{
+  if(!db||!code)return null;
+  for(let i=0;i<retries;i++){
+    try{const snap=await getDoc(doc(db,"families",code));return snap.exists()?snap.data():null}
+    catch(e){console.warn("Firebase load attempt "+(i+1)+" failed:",e);if(i<retries-1)await new Promise(r=>setTimeout(r,700*(i+1)))}
+  }return null;
+};
+const fbSave=async(code,data,merge=false)=>{
+  if(!db||!code)return false;
+  try{await setDoc(doc(db,"families",code),{...data,ts:Date.now()},{merge});return true}
+  catch(e){console.warn("Firebase save failed:",e);return false}
+};
+const fbSavePin=async(code,pin)=>{
+  if(!db||!code)return;
+  try{await setDoc(doc(db,"families",code),{parentPin:pin,ts:Date.now()},{merge:true})}catch(e){console.warn("PIN save failed:",e)}
+};
+
 // ===== STORAGE =====
 const ls={g:(k,d=null)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch{return d}},s:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}},r:(k,d="")=>{try{return localStorage.getItem(k)||d}catch{return d}},w:(k,v)=>{try{localStorage.setItem(k,v)}catch{}}};
 const SK="wordAdv_v1",SK_C="wordAdv_country",SK_F="wordAdv_family",SK_PP="wordAdv_ppin";
@@ -211,6 +263,8 @@ const BOOKS={elementary:[
 {t:"Hamlet",a:"Shakespeare",e:"\uD83D\uDC80",qs:[{q:"What does the ghost reveal?",o:["His uncle murdered his father","He should leave Denmark","His mother is in danger","Treasure is buried"],a:"His uncle murdered his father"},{q:"To be or not to be contemplates:",o:["Whether life is worth living","Whether to go to war","Whether to marry","Whether to become king"],a:"Whether life is worth living"},{q:"Who is Ophelia?",o:["A noblewoman Hamlet loves","Hamlet's sister","The queen's maid","A princess"],a:"A noblewoman Hamlet loves"},{q:"The final scene?",o:["Nearly all main characters die","Everyone celebrates","Hamlet becomes king","Ghost appears again"],a:"Nearly all main characters die"},{q:"Central theme:",o:["Revenge, indecision, corruption","Joy of royal life","True love wins","Comedy"],a:"Revenge, indecision, corruption"}]}
 ]};
 const RES={early:[{l:"Ask a grown-up to read! \uD83D\uDCD6"},{l:"Starfall.com",u:"https://www.starfall.com"},{l:"PBS Kids",u:"https://pbskids.org"}],foundation:[{l:"Khan Academy Kids",u:"https://learn.khanacademy.org/khan-academy-kids/"},{l:"Starfall",u:"https://www.starfall.com"}],elementary:[{l:"Khan Academy ELA",u:"https://www.khanacademy.org/ela"},{l:"CommonLit",u:"https://www.commonlit.org"}],middle:[{l:"CommonLit",u:"https://www.commonlit.org"},{l:"Project Gutenberg",u:"https://www.gutenberg.org"}],high:[{l:"Project Gutenberg",u:"https://www.gutenberg.org"},{l:"LibriVox",u:"https://librivox.org"}]};
+const FREE_BOOKS={"The Secret Garden":"https://www.gutenberg.org/ebooks/113","The Wind in the Willows":"https://www.gutenberg.org/ebooks/289","Little Women":"https://www.gutenberg.org/ebooks/514","The Scarlet Letter":"https://www.gutenberg.org/ebooks/25344","Pride and Prejudice":"https://www.gutenberg.org/ebooks/1342","Jane Eyre":"https://www.gutenberg.org/ebooks/1260","The Great Gatsby":"https://www.gutenberg.org/ebooks/64317","Hamlet":"https://www.gutenberg.org/ebooks/1524","Romeo and Juliet":"https://www.gutenberg.org/ebooks/1112","The Hobbit":"https://librivox.org/the-hobbit-by-j-r-r-tolkien/"};
+const getAllBooksForBand=(band)=>{const all=[];for(const b of ["elementary","middle","high"]){if(BOOKS[b])for(const book of BOOKS[b])all.push({...book,band:b})}return all.filter(b=>{if(band==="elementary")return b.band==="elementary";if(band==="middle")return b.band==="elementary"||b.band==="middle";return true});};
 // ===== COMPONENTS (using htm tagged templates - no JSX, no Babel needed) =====
 function Confetti(){const c=["#FF6B6B","#FFD166","#06D6A0","#2D6BE4","#9B7FCF","#FF9FF3","#54A0FF"];return html`<div>${Array.from({length:40},(_,i)=>html`<div key=${i} class="confetti" style=${{left:Math.random()*100+"%",backgroundColor:c[i%c.length],width:8+Math.random()*8+"px",height:8+Math.random()*8+"px",animationDelay:Math.random()+"s",animationDuration:2+Math.random()+"s",borderRadius:Math.random()>.5?"50%":"2px"}}/>`)}</div>`}
 function PBar({c:cur,t}){return html`<div class="pbar"><div class="pfill" style=${{width:(t>0?cur/t*100:0)+"%"}}/></div>`}
@@ -257,6 +311,19 @@ function CreateProfile({country,onSave,onBack}){
     <button class="btn bp bw mt24" onClick=${()=>{if(nm.trim())onSave({id:Date.now()+Math.random(),name:nm.trim(),gradeId:gr,avatar:av,topicProgress:{},quizHistory:[],createdAt:Date.now(),terms:{activity:"Activity",flashcards:"Flash Cards",correct:"",wrong:""},wrongColour:"red"})}} disabled=${!nm.trim()}>Add Learner \uD83C\uDF89</button></div></div>`;
 }
 
+function AddBookForm({onAdd}){
+  const[show,setShow]=useState(false);const[title,setTitle]=useState("");const[author,setAuthor]=useState("");
+  if(!show)return html`<button class="btn bs bw mt16 no-print" onClick=${()=>setShow(true)}>\u2795 Add My Own Book</button>`;
+  const save=()=>{if(title.trim()&&author.trim()){onAdd(title.trim(),author.trim());setTitle("");setAuthor("");setShow(false)}};
+  return html`<div class="card mt16 no-print">
+    <h3>\u2795 Add a Book</h3>
+    <label class="lbl mt8">Book Title</label><input class="inp" value=${title} onInput=${e=>setTitle(e.target.value)} placeholder="e.g. The Wonderful Wizard of Oz" maxLength=${60}/>
+    <label class="lbl mt12">Author</label><input class="inp" value=${author} onInput=${e=>setAuthor(e.target.value)} placeholder="e.g. L. Frank Baum" maxLength=${40}/>
+    <div class="fx g8 mt12"><button class="btn bp" style=${{flex:1}} onClick=${save} disabled=${!title.trim()||!author.trim()}>Add Book \uD83D\uDCDA</button>
+    <button class="btn bs" onClick=${()=>setShow(false)}>Cancel</button></div>
+  </div>`;
+}
+
 function FeedbackScreen({onBack}){
   const[stars,setStars]=useState(0);const[sent,setSent]=useState(false);
   if(sent)return html`<div class="app tc" style=${{paddingTop:60}}><div style=${{fontSize:"3rem"}}>\uD83D\uDC9B</div><h1 class="mt8">Thank you!</h1><p class="tm mt8">Your feedback helps improve Word Adventure</p><button class="btn bp bw mt24" onClick=${onBack}>Home</button></div>`;
@@ -271,7 +338,7 @@ function App(){
   const[profiles,setProfiles]=useState(()=>ls.g(SK,[]));
   const[country,setCountry]=useState(()=>ls.r(SK_C,"IE"));
   const[familyCode,setFamilyCode]=useState(()=>ls.r(SK_F,""));
-  const[parentPin]=useState(()=>ls.r(SK_PP,"1234"));
+  const[parentPin,setParentPin]=useState(()=>ls.r(SK_PP,"1234"));
   const[scr,setScr]=useState(()=>ls.r(SK_F,"")?"home":"setup");
   const[sel,setSel]=useState(null);
   const[pinCb,setPinCb]=useState(null);
@@ -282,9 +349,117 @@ function App(){
   const[fTopic,setFT]=useState(null);const[fCards,setFC]=useState([]);const[fIdx,setFI]=useState(0);const[fRev,setFR]=useState(false);const[fGot,setFG]=useState(0);const[fTot,setFTot]=useState(0);
   const[rBook,setRB]=useState(null);const[rIdx,setRI]=useState(0);const[rAns,setRA]=useState(false);const[rSel,setRSl]=useState(null);const[rScore,setRS]=useState(0);
 
+  // Refs for sync
+  const familyCodeRef=useRef(familyCode);
+  const profilesRef=useRef(profiles);
+  const lastSyncRef=useRef(0);
+  const syncingRef=useRef(false);
+  const inGameRef=useRef(false);
+  useEffect(()=>{familyCodeRef.current=familyCode},[familyCode]);
+  useEffect(()=>{profilesRef.current=profiles},[profiles]);
+  // Track if user is in a game screen (don't sync mid-game)
+  useEffect(()=>{inGameRef.current=["activity","flash","readQ"].includes(scr)},[scr]);
+
+  // ===== PERSIST TO LOCALSTORAGE (fast-start cache) =====
   useEffect(()=>{ls.s(SK,profiles)},[profiles]);
   useEffect(()=>{ls.w(SK_C,country)},[country]);
   useEffect(()=>{ls.w(SK_F,familyCode)},[familyCode]);
+  useEffect(()=>{ls.w(SK_PP,parentPin)},[parentPin]);
+
+  // ===== FIREBASE SYNC =====
+  const syncToFirebase=useCallback(async()=>{
+    const code=familyCodeRef.current;
+    if(!db||!code||syncingRef.current||inGameRef.current)return;
+    const now=Date.now();
+    if(now-lastSyncRef.current<8000)return; // 8s debounce
+    syncingRef.current=true;lastSyncRef.current=now;
+    try{
+      const remote=await fbLoad(code);
+      if(remote){
+        // Merge: if remote is newer, use remote profiles
+        const localTs=Math.max(...profilesRef.current.map(p=>p.createdAt||0),0);
+        const remoteTs=remote.ts||0;
+        if(remote.profiles&&remote.profiles.length>0){
+          // Smart merge: take the version of each profile that has more progress
+          const merged=new Map();
+          for(const p of profilesRef.current)merged.set(p.id,p);
+          for(const rp of remote.profiles){
+            const lp=merged.get(rp.id);
+            if(!lp){merged.set(rp.id,rp);continue}
+            // Merge topic progress — keep the one with more attempts per topic
+            const mtp={...(lp.topicProgress||{})};
+            for(const[k,v]of Object.entries(rp.topicProgress||{})){
+              if(!mtp[k]||v.at>(mtp[k].at||0))mtp[k]=v;
+            }
+            // Merge reading list — keep any "finished" or "reading" status
+            const mrl={...(lp.readingList||{}),...(rp.readingList||{})};
+            for(const[k,v]of Object.entries(lp.readingList||{})){
+              if(v==="finished"||(v==="reading"&&mrl[k]==="notstarted"))mrl[k]=v;
+            }
+            // Merge custom books — union
+            const cids=new Set((lp.customBooks||[]).map(b=>b.id));
+            const mcb=[...(lp.customBooks||[])];
+            for(const b of(rp.customBooks||[])){if(!cids.has(b.id))mcb.push(b)}
+            // Merge quiz history — union by timestamp
+            const qts=new Set((lp.quizHistory||[]).map(q=>q.ts));
+            const mqh=[...(lp.quizHistory||[])];
+            for(const q of(rp.quizHistory||[])){if(!qts.has(q.ts))mqh.push(q)}
+            merged.set(rp.id,{...lp,...rp,topicProgress:mtp,readingList:mrl,customBooks:mcb,quizHistory:mqh.sort((a,b)=>a.ts-b.ts),terms:{...(rp.terms||{}),...(lp.terms||{})}});
+          }
+          // Handle deletions: if remote has fewer profiles, a profile was deleted on another device
+          if(remote.profiles.length<profilesRef.current.length){
+            const remoteIds=new Set(remote.profiles.map(p=>p.id));
+            for(const[id] of merged){if(!remoteIds.has(id)&&!profilesRef.current.find(p=>p.id===id))merged.delete(id)}
+          }
+          const mergedArr=[...merged.values()];
+          setProfiles(mergedArr);
+        }
+        if(remote.parentPin)setParentPin(remote.parentPin);
+        if(remote.country)setCountry(remote.country);
+      }
+      // Save current state back (full doc write so deletions propagate)
+      await fbSave(familyCodeRef.current,{profiles:profilesRef.current,parentPin:ls.r(SK_PP,"1234"),country:ls.r(SK_C,"IE")},false);
+    }catch(e){console.warn("Sync error:",e)}
+    syncingRef.current=false;
+  },[]);
+
+  // Sync on startup
+  useEffect(()=>{
+    if(!familyCode)return;
+    const doInitialSync=async()=>{
+      const remote=await fbLoad(familyCode);
+      if(remote?.profiles?.length>0){
+        setProfiles(remote.profiles);
+        if(remote.parentPin)setParentPin(remote.parentPin);
+        if(remote.country)setCountry(remote.country);
+      }else{
+        // First time — push local to Firebase
+        await fbSave(familyCode,{profiles:profilesRef.current,parentPin,country},false);
+      }
+    };
+    doInitialSync();
+  },[familyCode]);
+
+  // Sync on visibility change, focus, and every 30s
+  useEffect(()=>{
+    if(!familyCode)return;
+    const onVis=()=>{if(document.visibilityState==="visible")syncToFirebase()};
+    const onFocus=()=>syncToFirebase();
+    document.addEventListener("visibilitychange",onVis);
+    window.addEventListener("focus",onFocus);
+    const interval=setInterval(()=>{if(document.visibilityState==="visible")syncToFirebase()},30000);
+    return()=>{document.removeEventListener("visibilitychange",onVis);window.removeEventListener("focus",onFocus);clearInterval(interval)};
+  },[familyCode,syncToFirebase]);
+
+  // Save to Firebase whenever profiles change (debounced via syncToFirebase)
+  const saveTimer=useRef(null);
+  useEffect(()=>{
+    if(!familyCode||!db)return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current=setTimeout(()=>{
+      fbSave(familyCode,{profiles,parentPin,country},false);
+    },2000); // 2s debounce on saves
+  },[profiles,parentPin,country]);
 
   const notify=(m,d=2500)=>{setNtf(m);setTimeout(()=>setNtf(null),d)};
   const prof=sel!==null?profiles.find(p=>p.id===sel):null;
@@ -295,7 +470,23 @@ function App(){
   const tapRef=useRef(0);const tapTm=useRef(null);
   const Ntf=ntf?html`<div class="ntf">${ntf}</div>`:null;
 
-  if(scr==="setup")return html`<${FamilySetup} onDone=${(code,mode)=>{setFamilyCode(code);notify(mode==="create"?"Family created! "+code:"Joined "+code,3000);setScr("home")}}/>`;
+  if(scr==="setup")return html`<${FamilySetup} onDone=${async(code,mode)=>{
+    setFamilyCode(code);
+    if(mode==="join"&&db){
+      // On join: load from Firebase, do NOT write back
+      const remote=await fbLoad(code);
+      if(remote?.profiles){setProfiles(remote.profiles);if(remote.parentPin)setParentPin(remote.parentPin);if(remote.country)setCountry(remote.country);notify("Joined "+code+"! Loaded "+remote.profiles.length+" learner(s)",3500)}
+      else notify("Joined "+code+" (no existing data found)",3000);
+    }else if(mode==="create"&&db){
+      // On create: push local to Firebase
+      await fbSave(code,{profiles:[],parentPin:"1234",country},false);
+      notify("Family created! "+code,4000);
+    }else{notify(mode==="create"?"Family created! "+code:"Joined "+code,3000)}
+    setScr("home");
+    // Force sync after 500ms
+    setTimeout(()=>syncToFirebase(),500);
+  }}/>`;
+
   if(scr==="create")return html`<${CreateProfile} country=${country} onSave=${p=>{setProfiles(prev=>[...prev,p]);setScr("home")}} onBack=${()=>setScr("home")}/>`;
   if(scr==="feedback")return html`<${FeedbackScreen} onBack=${()=>setScr("home")}/>`;
 
@@ -327,6 +518,7 @@ function App(){
         <button class="btn bp bw" style=${{fontSize:"1.05rem",padding:"16px"}} onClick=${()=>setScr("tsel-f")}>\uD83D\uDCDA ${prof.terms?.flashcards||"Flash Cards"}</button>
         <button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#7C5CFC",color:"#fff"}} onClick=${()=>setScr("tsel-a")}>\uD83C\uDF1F ${actLbl} Mode</button>
         ${showR&&html`<button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#E8651A",color:"#fff"}} onClick=${()=>setScr("reading")}>\uD83D\uDCD6 Reading Companion</button>`}
+        ${showR&&html`<button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#2A9D8F",color:"#fff"}} onClick=${()=>setScr("booklist")}>\uD83D\uDCDA My Reading List</button>`}
         <button class="btn bs bw" onClick=${()=>setScr("progress")}>\uD83D\uDCCA My Progress</button></div>${Ntf}</div>`}
 
   if((scr==="tsel-f"||scr==="tsel-a")&&prof){const mode=scr==="tsel-f"?"flash":"act";const topics=topicsFor(prof.gradeId);
@@ -400,6 +592,94 @@ function App(){
       <p class="mt8 tm">${pct>=.8?"Wonderful understanding! \u2728":"Keep reading! \uD83C\uDF31"}</p><p class="mt16 tm" style=${{fontSize:".88rem"}}>\uD83D\uDCD6 What is next?</p>
       <button class="btn bp bw mt24" onClick=${()=>{setRB(null);setScr("reading")}}>Back to Books</button></div>`}
 
+  // ===== READING LIST =====
+  if(scr==="booklist"&&prof){
+    const band=gB(prof.gradeId);
+    const allBooks=getAllBooksForBand(band);
+    const rl=prof.readingList||{};
+    const customBooks=prof.customBooks||[];
+    const getStatus=(key)=>rl[key]||"notstarted";
+    const setStatus=(key,status)=>{updProf(sel,p=>{p.readingList={...(p.readingList||{}), [key]:status};return p})};
+    const addCustom=(title,author)=>{updProf(sel,p=>{p.customBooks=[...(p.customBooks||[]),{t:title,a:author,e:"\uD83D\uDCD6",id:Date.now()}];return p})};
+    const removeCustom=(id)=>{updProf(sel,p=>{p.customBooks=(p.customBooks||[]).filter(b=>b.id!==id);const rl2={...(p.readingList||{})};delete rl2["custom_"+id];p.readingList=rl2;return p})};
+    const allEntries=[...allBooks.map(b=>({...b,key:"book_"+b.t})),...customBooks.map(b=>({...b,key:"custom_"+b.id,custom:true}))];
+    const finished=allEntries.filter(b=>getStatus(b.key)==="finished").length;
+    const reading=allEntries.filter(b=>getStatus(b.key)==="reading").length;
+    const total=allEntries.length;
+    const statusEmoji={notstarted:"\uD83D\uDCD6",reading:"\uD83D\uDC40",finished:"\u2705"};
+    const statusLabel={notstarted:"Not Started",reading:"Reading",finished:"Finished"};
+    const statusCycle=["notstarted","reading","finished"];
+
+    const handlePrint=()=>{window.print()};
+    const handleExport=()=>{
+      let txt=prof.name+"'s Reading List\\n"+"=".repeat(30)+"\\n\\n";
+      txt+="Finished: "+finished+" | Reading: "+reading+" | Total: "+total+"\\n\\n";
+      for(const b of allEntries){const s=getStatus(b.key);txt+=(s==="finished"?"[x] ":s==="reading"?"[~] ":"[ ] ")+b.t+" by "+b.a+(b.custom?" (added by me)":"")+"\\n"}
+      const blob=new Blob([txt],{type:"text/plain"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=prof.name+"_reading_list.txt";a.click();URL.revokeObjectURL(url);
+    };
+
+    return html`<div class="app">
+      <div class="no-print"><button class="bb" onClick=${()=>setScr("dash")}>\u2190 Dashboard</button></div>
+      <div class="fx ac g12 mt8 mb12"><span style=${{fontSize:"2rem"}}>\uD83D\uDCDA</span><h2>${prof.name}'s Reading List</h2></div>
+
+      <div class="print-only" style=${{marginBottom:16}}><h2>\uD83D\uDCDA ${prof.name}'s Reading List</h2><p style=${{color:"var(--muted)",fontSize:".85rem"}}>Word Adventure \u2014 ${new Date().toLocaleDateString()}</p></div>
+
+      <div class="rl-stat no-print">
+        <div class="rl-stat-card"><div class="rl-stat-num" style=${{color:"var(--mint)"}}>${finished}</div><div class="rl-stat-lbl">Finished</div></div>
+        <div class="rl-stat-card"><div class="rl-stat-num" style=${{color:"var(--blue)"}}>${reading}</div><div class="rl-stat-lbl">Reading</div></div>
+        <div class="rl-stat-card"><div class="rl-stat-num">${total}</div><div class="rl-stat-lbl">Total Books</div></div>
+      </div>
+
+      ${finished>=3&&html`<div class="banner" style=${{background:"#fff3d6",color:"#8a6800"}}>
+        ${finished>=10?"\uD83C\uDFC6 Legendary Reader! "+finished+" books finished!":finished>=7?"\uD83C\uDF1F Super Reader! "+finished+" books finished!":finished>=5?"\u2B50 Bookworm! "+finished+" books finished!":"\uD83C\uDF31 Great start! "+finished+" books finished!"}</div>`}
+
+      <div class="no-print fx g8 mb16">
+        <button class="btn bs" style=${{flex:1,fontSize:".85rem",padding:"10px"}} onClick=${handlePrint}>\uD83D\uDDA8\uFE0F Print List</button>
+        <button class="btn bs" style=${{flex:1,fontSize:".85rem",padding:"10px"}} onClick=${handleExport}>\uD83D\uDCE5 Export</button>
+      </div>
+
+      <h3 class="mb8">\uD83D\uDCDA Recommended Books</h3>
+      ${allBooks.map((b,i)=>{const key="book_"+b.t;const s=getStatus(key);const free=FREE_BOOKS[b.t];
+        return html`<div key=${key} class="rl-book" style=${{animationDelay:i*.03+"s",borderLeft:s==="finished"?"4px solid var(--mint)":s==="reading"?"4px solid var(--blue)":"4px solid #e8ecf0"}}>
+          <div class="rl-check ${s==="finished"?"done":s==="reading"?"reading":""}" onClick=${()=>{const next=statusCycle[(statusCycle.indexOf(s)+1)%3];setStatus(key,next)}}>
+            ${s==="finished"?"\u2713":s==="reading"?"\uD83D\uDC40":""}
+          </div>
+          <div style=${{flex:1}}>
+            <div style=${{fontWeight:700,fontSize:".95rem",color:s==="finished"?"var(--mint)":"var(--navy)"}}>${b.e} ${b.t}${free&&html`<span class="rl-free">Free</span>`}</div>
+            <div class="tm" style=${{fontSize:".8rem"}}>by ${b.a}</div>
+            <div class="rl-progress no-print">
+              ${statusCycle.map(st=>html`<button key=${st} class=${"rl-pip"+(s===st?" on-"+st:"")} onClick=${()=>setStatus(key,st)}>${statusEmoji[st]} ${statusLabel[st]}</button>`)}
+            </div>
+            ${free&&html`<a href=${free} target="_blank" rel="noopener" class="no-print" style=${{fontSize:".78rem",color:"var(--blue)",fontWeight:600,textDecoration:"none",display:"inline-block",marginTop:4}}>\uD83D\uDD17 Read free online</a>`}
+          </div>
+        </div>`})}
+
+      ${customBooks.length>0&&html`<h3 class="mt16 mb8">\u2728 My Added Books</h3>
+        ${customBooks.map((b,i)=>{const key="custom_"+b.id;const s=getStatus(key);
+          return html`<div key=${key} class="rl-book" style=${{borderLeft:s==="finished"?"4px solid var(--mint)":s==="reading"?"4px solid var(--blue)":"4px solid #e8ecf0"}}>
+            <div class="rl-check ${s==="finished"?"done":s==="reading"?"reading":""}" onClick=${()=>{const next=statusCycle[(statusCycle.indexOf(s)+1)%3];setStatus(key,next)}}>
+              ${s==="finished"?"\u2713":s==="reading"?"\uD83D\uDC40":""}
+            </div>
+            <div style=${{flex:1}}>
+              <div style=${{fontWeight:700,fontSize:".95rem",color:s==="finished"?"var(--mint)":"var(--navy)"}}>\uD83D\uDCD6 ${b.t}</div>
+              <div class="tm" style=${{fontSize:".8rem"}}>by ${b.a}</div>
+              <div class="rl-progress no-print">
+                ${statusCycle.map(st=>html`<button key=${st} class=${"rl-pip"+(s===st?" on-"+st:"")} onClick=${()=>setStatus(key,st)}>${statusEmoji[st]} ${statusLabel[st]}</button>`)}
+              </div>
+              <button class="no-print" onClick=${()=>{if(confirm("Remove "+b.t+"?"))removeCustom(b.id)}} style=${{background:"none",border:"none",color:"var(--coral)",fontSize:".75rem",fontWeight:700,cursor:"pointer",marginTop:4,fontFamily:"Nunito"}}>Remove</button>
+            </div>
+          </div>`})}`}
+
+      <${AddBookForm} onAdd=${addCustom}/>
+
+      ${finished>=1&&html`<div class="card tc mt16 no-print" style=${{background:"linear-gradient(135deg,#fdf6ee,#fff3d6)",border:"2px solid var(--sun)"}}>
+        <div style=${{fontSize:"2rem"}}>${finished>=10?"\uD83C\uDFC6":finished>=7?"\uD83C\uDF1F":finished>=5?"\u2B50":finished>=3?"\uD83D\uDCDA":"\uD83C\uDF31"}</div>
+        <div style=${{fontFamily:"Baloo 2",fontWeight:800,fontSize:"1.1rem",color:"var(--navy)",marginTop:4}}>${prof.name} \u2014 ${finished>=10?"Legendary Reader":finished>=7?"Super Reader":finished>=5?"Bookworm":finished>=3?"Rising Reader":"Page Turner"}</div>
+        <div class="tm" style=${{fontSize:".82rem"}}>${finished} book${finished!==1?"s":""} finished</div>
+      </div>`}
+
+    ${Ntf}</div>`}
+
   if(scr==="progress"&&prof){const topics=topicsFor(prof.gradeId);const hist=(prof.quizHistory||[]).slice(-5).reverse();
     return html`<div class="app"><button class="bb" onClick=${()=>setScr("dash")}>\u2190 Dashboard</button>
       <div class="fx ac g12 mt8 mb16"><span style=${{fontSize:"2rem"}}>${prof.avatar}</span><h2>${prof.name}'s Progress</h2></div>
@@ -429,7 +709,13 @@ function App(){
       <label class="lbl mt12">Wrong Colour</label><div class="fx g8 mt8">${WCOLS.map(c=>html`<div key=${c.id} class=${"cdot"+(p.wrongColour===c.id?" sel":"")} style=${{background:c.b}} onClick=${()=>updProf(p.id,pr=>{pr.wrongColour=c.id;return pr})} title=${c.l}/>`)}</div>
     </div>`)}</div>`}
     ${parentTab==="family"&&html`<div>
-      <div class="card"><h3>Family Code</h3><p class="mt8" style=${{fontSize:"1.2rem",fontWeight:800,color:"var(--blue)",letterSpacing:2}}>${familyCode}</p><p class="tm mt8" style=${{fontSize:".82rem"}}>Share to connect devices</p></div></div>`}
+      <div class="card"><h3>Family Code</h3><p class="mt8" style=${{fontSize:"1.2rem",fontWeight:800,color:"var(--blue)",letterSpacing:2}}>${familyCode}</p><p class="tm mt8" style=${{fontSize:".82rem"}}>Share this code with other devices to sync</p></div>
+      <div class="card"><h3>Change Parent PIN</h3>
+        <input class="inp mt8" type="password" inputMode="numeric" maxLength=${4} placeholder="New 4-digit PIN"
+          onInput=${e=>{const v=e.target.value.replace(/\D/g,"");if(v.length===4){setParentPin(v);ls.w(SK_PP,v);if(db&&familyCode)fbSavePin(familyCode,v);notify("PIN updated on all devices! \u2705")}}}/></div>
+      <div class="card"><h3>Sync Status</h3>
+        <p class="mt8" style=${{fontSize:".88rem"}}>${db?"\u2705 Firebase connected \u2014 data syncs across all devices":"\u26A0\uFE0F Firebase not configured \u2014 data is local only"}</p>
+        <button class="btn bs bw mt12" onClick=${()=>{syncToFirebase();notify("Syncing...")}}>Sync Now</button></div></div>`}
     ${Ntf}</div>`;
 
   return html`<div class="app tc" style=${{paddingTop:60}}><h2>Loading...</h2><button class="btn bp mt16" onClick=${()=>setScr("home")}>Home</button></div>`;
