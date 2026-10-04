@@ -109,6 +109,14 @@ h3{font-size:clamp(1.05rem,3.5vw,1.3rem);font-weight:700}
 </head>
 <body>
 <div id="root"></div>
+<script src="wa-games.js"></script>
+<script src="wa-game-kit.js"></script>
+<script src="wa-game-letterpop.js"></script>
+<script src="wa-game-rhymetime.js"></script>
+<script src="wa-game-wordbuilder.js"></script>
+<script src="wa-game-sentenceshuffle.js"></script>
+<script src="wa-game-wordworkshop.js"></script>
+<script src="wa-game-litlab.js"></script>
 <script type="module">
 import{createElement as h,useState,useEffect,useRef,useCallback}from"https://esm.sh/react@18.2.0";
 import{createRoot}from"https://esm.sh/react-dom@18.2.0/client";
@@ -561,6 +569,26 @@ function FeedbackScreen({onBack}){
 }
 
 // ===== MAIN APP =====
+// ===== GAMES (wa-games.js + wa-game-*.js) =====
+// Opens the Words Adventure games menu. With a learner it skips "Who's playing?"; without one the menu asks.
+function openGames(p){const G=window.WAGames;if(!G)return;
+  G.configure({getCurrentPlayer:p?()=>({id:String(p.id),name:p.name,avatar:p.avatar}):null,onClose:()=>G.configure({getCurrentPlayer:null})});G.open()}
+if(window.WAGames){
+  window.WAGames.configure({
+    getFamilyCode:()=>ls.r(SK_F,"")||"GUEST",
+    getPlayers:()=>ls.g(SK,[]).map(p=>({id:String(p.id),name:p.name,avatar:p.avatar})),
+    onResult:r=>{try{const k="wordAdv_gameResults";const all=ls.g(k,[]);all.push({...r,ts:Date.now()});ls.s(k,all.slice(-200))}catch{}}
+  });
+  // Multiplayer TEST mode: open the site with ?mp=1 to switch on Realtime Database rooms. Off for everyone else.
+  if(/[?&]mp=1(&|$)/.test(location.search)){
+    const loadScript=src=>new Promise((ok,no)=>{const el=document.createElement("script");el.src=src;el.onload=ok;el.onerror=no;document.head.appendChild(el)});
+    loadScript("https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js").then(()=>loadScript("https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js")).then(()=>{
+      const gamesApp=window.firebase.initializeApp({...FIREBASE_CONFIG,databaseURL:"https://homeschool-math-default-rtdb.europe-west1.firebasedatabase.app"},"wa-games");
+      window.WAGames.configure({db:gamesApp.database()});
+    }).catch(()=>{});
+  }
+}
+
 function App(){
   const[profiles,setProfiles]=useState(()=>ls.g(SK,[]));
   const[country,setCountry]=useState(()=>ls.r(SK_C,"IE"));
@@ -734,7 +762,7 @@ function App(){
       <div class="pcard" style=${{background:"#f0f4ff",border:"3px dashed #c0d0f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:120}}
         onClick=${()=>setPinCb(()=>()=>{setPinCb(null);setScr("create")})}><div style=${{fontSize:"2rem",color:"var(--blue)"}}>+</div><div style=${{fontWeight:700,color:"var(--blue)",fontSize:".82rem"}}>Add Learner</div></div>
     </div>
-    <div class="mt24 fx g12 fw"><button class="btn bs" style=${{flex:1}} onClick=${()=>setPinCb(()=>()=>{setPinCb(null);setScr("parent")})}>\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67 Parent Mode</button></div>
+    <div class="mt24 fx g12 fw"><button class="btn bs" style=${{flex:1}} onClick=${()=>setPinCb(()=>()=>{setPinCb(null);setScr("parent")})}>\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67 Parent Mode</button><button class="btn br" style=${{flex:1}} onClick=${()=>openGames(null)}>\uD83C\uDFAE Play Games</button></div>
     ${familyCode&&html`<div class="tc mt16"><span class="tm" style=${{fontSize:".78rem"}}>Family: ${familyCode}</span></div>`}
     <div class="tc mt8 no-print"><button style=${{background:"none",border:"none",color:"var(--muted)",fontSize:".78rem",fontWeight:600,cursor:"pointer",fontFamily:"Nunito",padding:"6px 12px"}} onClick=${()=>{
       if(confirm("Leave this family on this device?\n\nYour data will stay safe in the cloud — you can rejoin with code "+familyCode+" anytime.")){
@@ -754,6 +782,7 @@ function App(){
       <div style=${{display:"grid",gap:12}}>
         <button class="btn bp bw" style=${{fontSize:"1.05rem",padding:"16px"}} onClick=${()=>setScr("tsel-f")}>\uD83D\uDCDA ${prof.terms?.flashcards||"Flash Cards"}</button>
         <button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#7C5CFC",color:"#fff"}} onClick=${()=>setScr("tsel-a")}>\uD83C\uDF1F ${actLbl} Mode</button>
+        <button class="btn br bw" style=${{fontSize:"1.05rem",padding:"16px"}} onClick=${()=>openGames(prof)}>\uD83C\uDFAE Play Games</button>
         ${showR&&html`<button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#E8651A",color:"#fff"}} onClick=${()=>setScr("reading")}>\uD83D\uDCD6 Reading Companion</button>`}
         ${showR&&html`<button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#2A9D8F",color:"#fff"}} onClick=${()=>setScr("booklist")}>\uD83D\uDCDA My Reading List</button>`}
         <button class="btn bs bw" onClick=${()=>setScr("progress")}>\uD83D\uDCCA My Progress</button></div>${Ntf}</div>`}
