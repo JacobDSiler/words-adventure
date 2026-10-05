@@ -155,6 +155,30 @@ const fbSavePin=async(code,pin)=>{
   try{await setDoc(doc(db,"families",code),{parentPin:pin,ts:Date.now()},{merge:true})}catch(e){console.warn("PIN save failed:",e)}
 };
 
+// MERGE-START (additive family merge: never deletes or overwrites; only adds or keeps the richer record)
+const mergeProf=(lp,rp)=>{
+  const mtp={...(lp.topicProgress||{})};
+  for(const[k,v]of Object.entries(rp.topicProgress||{})){if(!mtp[k]||(v&&v.at>(mtp[k].at||0)))mtp[k]=v}
+  const mrl={...(lp.readingList||{}),...(rp.readingList||{})};
+  for(const[k,v]of Object.entries(lp.readingList||{})){if(v==="finished"||(v==="reading"&&mrl[k]==="notstarted"))mrl[k]=v}
+  const cids=new Set((lp.customBooks||[]).map(b=>b.id));const mcb=[...(lp.customBooks||[])];
+  for(const b of(rp.customBooks||[])){if(!cids.has(b.id)){cids.add(b.id);mcb.push(b)}}
+  const qts=new Set((lp.quizHistory||[]).map(q=>q.ts));const mqh=[...(lp.quizHistory||[])];
+  for(const q of(rp.quizHistory||[])){if(!qts.has(q.ts)){qts.add(q.ts);mqh.push(q)}}
+  return{...rp,...lp,topicProgress:mtp,readingList:mrl,customBooks:mcb,quizHistory:mqh.sort((a,b)=>a.ts-b.ts),terms:{...(rp.terms||{}),...(lp.terms||{})}};
+};
+// Returns {list, added, merged}. Local learners always stay; remote ones are added (or folded in when the id matches).
+const mergeProfileLists=(local,remote,only)=>{
+  const out=(local||[]).map(p=>p);const idx=new Map(out.map((p,i)=>[p.id,i]));let added=0,merged=0;
+  for(const rp of(remote||[])){
+    if(only&&!only.has(rp.id))continue;
+    if(idx.has(rp.id)){const i=idx.get(rp.id);out[i]=mergeProf(out[i],rp);merged++}
+    else{out.push(rp);idx.set(rp.id,out.length-1);added++}
+  }
+  return{list:out,added,merged};
+};
+// MERGE-END
+
 // ===== STORAGE =====
 const ls={g:(k,d=null)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch{return d}},s:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}},r:(k,d="")=>{try{return localStorage.getItem(k)||d}catch{return d}},w:(k,v)=>{try{localStorage.setItem(k,v)}catch{}}};
 const SK="wordAdv_v1",SK_C="wordAdv_country",SK_F="wordAdv_family",SK_PP="wordAdv_ppin";
@@ -609,6 +633,7 @@ function App(){
   // Refs for sync
   const familyCodeRef=useRef(familyCode);
   const profilesRef=useRef(profiles);
+  const[mgCode,setMgCode]=useState("");const[mgFound,setMgFound]=useState(null);const[mgSel,setMgSel]=useState(new Set());const[mgBusy,setMgBusy]=useState(false);
   const lastSyncRef=useRef(0);
   const syncingRef=useRef(false);
   const inGameRef=useRef(false);
@@ -728,17 +753,26 @@ function App(){
   const Ntf=ntf?html`<div class="ntf">${ntf}</div>`:null;
 
   if(scr==="setup")return html`<${FamilySetup} onDone=${async(code,mode)=>{
-    setFamilyCode(code);
     if(mode==="join"&&db){
-      // On join: load from Firebase, do NOT write back
+      // On join: ADDITIVE. Keep any learners already on this device and add the family's learners to them.
       const remote=await fbLoad(code);
-      if(remote?.profiles){setProfiles(remote.profiles);if(remote.parentPin)setParentPin(remote.parentPin);if(remote.country)setCountry(remote.country);notify("Joined "+code+"! Loaded "+remote.profiles.length+" learner(s)",3500)}
-      else notify("Joined "+code+" (no existing data found)",3000);
-    }else if(mode==="create"&&db){
+      const localList=profilesRef.current||[];
+      if(remote?.profiles){
+        const m=mergeProfileLists(localList,remote.profiles);
+        if(localList.length>0)await fbSave(code,{profiles:m.list,parentPin:remote.parentPin||parentPin,country:remote.country||country},false);
+        setProfiles(m.list);if(remote.parentPin)setParentPin(remote.parentPin);if(remote.country)setCountry(remote.country);
+        notify("Joined "+code+"! "+(localList.length?("Kept your "+localList.length+" and added "+m.added+" learner(s)"):("Loaded "+remote.profiles.length+" learner(s)")),4500);
+      }else{
+        if(localList.length>0)await fbSave(code,{profiles:localList,parentPin,country},false);
+        notify("Joined "+code+(localList.length?" with your "+localList.length+" learner(s)":" (no existing data found)"),3500);
+      }
+      setFamilyCode(code);
+    }else if(mode==="join"){setFamilyCode(code);notify("Joined "+code,3000)}
+    else if(mode==="create"&&db){setFamilyCode(code);
       // On create: push local to Firebase
-      await fbSave(code,{profiles:[],parentPin:"1234",country},false);
+      await fbSave(code,{profiles:profilesRef.current||[],parentPin:"1234",country},false);
       notify("Family created! "+code,4000);
-    }else{notify(mode==="create"?"Family created! "+code:"Joined "+code,3000)}
+    }else{setFamilyCode(code);notify(mode==="create"?"Family created! "+code:"Joined "+code,3000)}
     setScr("home");
     // Force sync after 500ms
     setTimeout(()=>syncToFirebase(),500);
@@ -1072,6 +1106,28 @@ function App(){
             else{navigator.clipboard?.writeText(txt).then(()=>notify("Copied to clipboard! \u2705")).catch(()=>{prompt("Copy this:",txt)})}
           }}>\uD83D\uDCE4 Share Family Code</button>
         </div>
+      </div>
+
+      <div class="card"><h3>\uD83E\uDD1D Merge Another Family</h3>
+        <p class="tm mt8" style=${{fontSize:".82rem"}}>Bring learners from another family code (Word or Math Adventure) into this one. Nothing is deleted or changed in the other family, and nothing here is overwritten.</p>
+        <input class="inp mt8" placeholder="WA-XXXX or MA-XXXX" value=${mgCode} maxLength=${7} onInput=${e=>{setMgCode(e.target.value.toUpperCase());setMgFound(null)}}/>
+        <button class="btn bs bw mt12" disabled=${mgBusy||mgCode.length<6||mgCode===familyCode} onClick=${async()=>{
+          setMgBusy(true);const r=await fbLoad(mgCode);setMgBusy(false);
+          if(!r||!Array.isArray(r.profiles)||!r.profiles.length){setMgFound(null);notify("No learners found for "+mgCode,3500);return}
+          setMgFound(r.profiles);setMgSel(new Set(r.profiles.map(x=>x.id)));
+        }}>${mgBusy?"Looking...":"Look up learners"}</button>
+        ${mgFound&&html`<div class="mt12">
+          ${mgFound.map(x=>html`<label key=${x.id} class="fx g8" style=${{alignItems:"center",padding:"6px 0"}}>
+            <input type="checkbox" checked=${mgSel.has(x.id)} onChange=${()=>setMgSel(prev=>{const n=new Set(prev);n.has(x.id)?n.delete(x.id):n.add(x.id);return n})}/>
+            <span style=${{fontSize:"1.3rem"}}>${x.avatar||"\uD83D\uDCDA"}</span><b>${x.name}</b>
+            ${profiles.some(q=>q.id===x.id)&&html`<span class="tm" style=${{fontSize:".75rem"}}>(already here, progress will be combined)</span>`}
+          </label>`)}
+          <button class="btn bp bw mt12" disabled=${mgSel.size===0} onClick=${()=>{
+            const m=mergeProfileLists(profilesRef.current,mgFound,mgSel);
+            setProfiles(m.list);setMgFound(null);setMgCode("");
+            notify("Merged! Added "+m.added+", combined "+m.merged+" \u2705",4000);
+          }}>Add ${mgSel.size} learner(s) to this family</button>
+        </div>`}
       </div>
 
       <div class="card"><h3>\uD83D\uDD11 Change Parent PIN</h3>
