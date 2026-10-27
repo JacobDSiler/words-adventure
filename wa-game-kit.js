@@ -30,6 +30,8 @@
     '.wk-bar{width:100%;max-width:440px;height:12px;border:3px solid ' + NAVY + ';border-radius:99px;background:#fff;overflow:hidden}',
     '.wk-bar i{display:block;height:100%;width:100%;background:#3ddc97}',
     '.wk-bar.low i{background:#ff6b6b}',
+    '.wk-bar.calm i{background:#5b9bd5}',
+    '.wk-say{font:inherit;font-size:1.1rem;border:3px solid ' + NAVY + ';border-radius:50%;width:40px;height:40px;background:#ffd23f;cursor:pointer;vertical-align:middle;box-shadow:0 3px 0 ' + NAVY + '}',
     '.wk-pad{display:grid;gap:10px;width:100%;max-width:440px}',
     '.wk-btn{font:inherit;font-weight:900;font-size:1.35rem;padding:12px 6px;border-radius:16px;border:3px solid ' + NAVY + ';background:#fff;color:' + NAVY + ';box-shadow:0 5px 0 ' + NAVY + ';cursor:pointer;touch-action:manipulation;min-width:0;overflow-wrap:anywhere;line-height:1.2}',
     '.wk-btn.big{font-size:1.9rem}',
@@ -87,7 +89,7 @@
     return WAG.register({
       id: def.id, name: def.name, emoji: def.emoji, blurb: def.blurb, grades: def.grades,
       modes: def.modes || ['solo', 'coop', 'versus', 'race'],
-      rounds: def.rounds || 10, maxLevel: maxLevel,
+      rounds: def.rounds || 10, maxLevel: maxLevel, readAloud: !!def.readAloud,
       maxDurationMs: def.levels.reduce(function (m, c) { return c && c.ms > m ? c.ms : m; }, 12000),
       levelLabel: function (l) { return def.levels[clamp(l | 0 || 1, 1, maxLevel)].label; },
       makeRound: makeRound, create: create
@@ -116,6 +118,45 @@
     return spec;
   }
 
+    /* Read aloud (see wa-speech.js). A spec may carry say:[items] and sayReveal:[items]; otherwise the question / explanation text is read. */
+  function speaker(def) { var S = root.WASpeech; return S && S.on(def.readAloud) ? S : null; }
+  function sayStart(def, sp) {
+    var S = speaker(def); if (!S) return;
+    var items = (sp.say || [sp.question]).slice();
+    if (def.speakChoices && sp.choices) sp.choices.forEach(function (c) { items.push(c.label); });
+    S.sayAll(items);
+  }
+  function sayEnd(def, sp) {
+    var S = speaker(def); if (!S) return;
+    S.sayAll(sp.sayReveal || (sp.explain ? [sp.explain] : []));
+  }
+  function replayBtn(def, sp, q) {
+    if (!speaker(def)) return;
+    var b = document.createElement('button'); b.className = 'wk-say'; b.type = 'button'; b.textContent = '🔊'; b.setAttribute('aria-label', 'Hear it again');
+    b.addEventListener('click', function () { sayStart(def, sp); });
+    q.appendChild(document.createTextNode(' ')); q.appendChild(b);
+  }
+
+  /* Relaxed timer: in solo play, top the clock up while the learner is still working so a
+     nearly-finished answer never gets cut off (and the bar stays calm instead of red). */
+  function relaxTick(st, host, sp, left, working) {
+    var relaxed = host.relaxed && host.relaxed();
+    if (relaxed && left < 0.3 && st.live) {
+      var cap = working ? 3 : 1;
+      if ((st.ext || 0) < cap && host.extend) {
+        sp.baseMs = sp.baseMs || sp.durationMs;
+        if (host.extend(Math.round(sp.baseMs * 0.5))) {
+          st.ext = (st.ext || 0) + 1;
+          if (st.cap) st.cap.textContent = 'Take your time ⏳';
+          left = clamp(1 - (host.now() - st.startAt) / sp.durationMs, 0, 1);
+        }
+      }
+    }
+    st.fill.style.width = (left * 100) + '%';
+    st.bar.className = 'wk-bar' + (left < 0.25 ? (relaxed ? ' calm' : ' low') : '');
+    return left;
+  }
+
   function choiceGame(def) {
     var maxLevel = def.levels.length - 1;
     function lv(l) { return clamp(l | 0 || 1, 1, maxLevel); }
@@ -140,9 +181,9 @@
 
       function ready(spec) {
         clearInterval(st.timer); el.innerHTML = '';
-        st.spec = spec; st.live = false; st.btns = []; st.picked = null;
+        st.spec = spec; st.live = false; st.btns = []; st.picked = null; st.ext = 0;
         WAG._lastSpec = spec;
-        var q = div('wk-q', spec.question);
+        var q = div('wk-q', spec.question); replayBtn(def, spec, q);
         var vis = div('wk-vis'); if (spec.visual) vis.innerHTML = spec.visual;
         var bar = div('wk-bar'), fill = document.createElement('i'); bar.appendChild(fill); st.bar = bar; st.fill = fill;
         var pad = div('wk-pad');
@@ -166,14 +207,13 @@
       function tick() {
         var sp = st.spec; if (!sp || !st.live) return;
         var left = clamp(1 - (host.now() - st.startAt) / sp.durationMs, 0, 1);
-        st.fill.style.width = (left * 100) + '%';
-        st.bar.className = 'wk-bar' + (left < 0.25 ? ' low' : '');
+        left = relaxTick(st, host, sp, left, false);
         if (left <= 0) { lock(); st.live = false; }
       }
       function go(startAt) {
         st.live = true; st.startAt = startAt;
         st.btns.forEach(function (b) { b.disabled = false; });
-        st.cap.textContent = def.prompt || 'Tap the answer!';
+        st.cap.textContent = def.prompt || 'Tap the answer!'; sayStart(def, st.spec);
         clearInterval(st.timer); st.timer = setInterval(tick, 80); tick();
       }
       function reveal() {
@@ -184,9 +224,9 @@
           if (v === String(sp.answer)) b.classList.add('good');
           else if (st.picked === v) b.classList.add('bad');
         });
-        st.cap.textContent = sp.explain || '';
+        st.cap.textContent = sp.explain || ''; sayEnd(def, sp);
       }
-      function destroy() { clearInterval(st.timer); el.innerHTML = ''; }
+      function destroy() { clearInterval(st.timer); if (root.WASpeech) root.WASpeech.stop(); el.innerHTML = ''; }
       return { ready: ready, go: go, reveal: reveal, destroy: destroy };
     }
     return register(def, makeRound, create, maxLevel);
@@ -222,7 +262,7 @@
         return got === sp.target.join(sp.join) || (sp.accept || []).indexOf(got) >= 0;
       }
       function paint() {
-        var sp = st.spec;
+        var sp = st.spec; st.lastAct = host.now();
         st.slots.innerHTML = '';
         st.placed.forEach(function (idx, pos) {
           var b = document.createElement('button');
@@ -238,9 +278,9 @@
 
       function ready(spec) {
         clearInterval(st.timer); el.innerHTML = '';
-        st.spec = spec; st.live = false; st.placed = []; st.tiles = []; st.done = false;
+        st.spec = spec; st.live = false; st.ext = 0; st.lastAct = 0; st.placed = []; st.tiles = []; st.done = false;
         WAG._lastSpec = spec;
-        var q = div('wk-q', spec.question);
+        var q = div('wk-q', spec.question); replayBtn(def, spec, q);
         var vis = div('wk-vis'); if (spec.visual) vis.innerHTML = spec.visual;
         var bar = div('wk-bar'), fill = document.createElement('i'); bar.appendChild(fill); st.bar = bar; st.fill = fill;
         st.slots = div('wk-slots');
@@ -268,14 +308,13 @@
       function tick() {
         var sp = st.spec; if (!sp || !st.live) return;
         var left = clamp(1 - (host.now() - st.startAt) / sp.durationMs, 0, 1);
-        st.fill.style.width = (left * 100) + '%';
-        st.bar.className = 'wk-bar' + (left < 0.25 ? ' low' : '');
+        left = relaxTick(st, host, sp, left, st.placed.length > 0 && host.now() - (st.lastAct || 0) < 15000);
         if (left <= 0) { st.live = false; lock(); }
       }
       function go(startAt) {
         st.live = true; st.startAt = startAt;
         st.tiles.forEach(function (b) { b.disabled = false; });
-        st.cap.textContent = def.prompt || 'Tap the tiles in order, then Check!';
+        st.cap.textContent = def.prompt || 'Tap the tiles in order, then Check!'; sayStart(def, st.spec);
         paint();
         clearInterval(st.timer); st.timer = setInterval(tick, 80); tick();
       }
@@ -289,9 +328,9 @@
             sp.target.forEach(function (t) { var b = document.createElement('button'); b.className = 'wk-tile put' + (sp.join === ' ' ? ' w' : ''); b.textContent = t; b.disabled = true; st.slots.appendChild(b); });
           }
         }
-        st.cap.textContent = sp.explain || '';
+        st.cap.textContent = sp.explain || ''; sayEnd(def, sp);
       }
-      function destroy() { clearInterval(st.timer); el.innerHTML = ''; }
+      function destroy() { clearInterval(st.timer); if (root.WASpeech) root.WASpeech.stop(); el.innerHTML = ''; }
       return { ready: ready, go: go, reveal: reveal, destroy: destroy };
     }
     return register(def, makeRound, create, maxLevel);
@@ -304,5 +343,5 @@
     return out;
   }
 
-  WAG.kit = { scramble: scramble, choiceGame: choiceGame, buildGame: buildGame, esc: esc, emojiHtml: emojiHtml, bigHtml: bigHtml, wordHtml: wordHtml, sentHtml: sentHtml, clamp: clamp };
+  WAG.kit = { ensureCss: ensureCss, scramble: scramble, choiceGame: choiceGame, buildGame: buildGame, esc: esc, emojiHtml: emojiHtml, bigHtml: bigHtml, wordHtml: wordHtml, sentHtml: sentHtml, clamp: clamp };
 })(typeof window !== 'undefined' ? window : globalThis);

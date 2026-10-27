@@ -1,6 +1,30 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+/* Harbor handoff: when opened from the Harbor hub (?from=harbor&family=CODE) and this device has no family yet,
+   adopt Harbor's family code so the app skips the sign-in screen. Runs before the app boots. Never replaces an
+   existing family on the device. The code is then removed from the address bar so it cannot leak into shared links. */
+(function () {
+  try {
+    var q = new URLSearchParams(location.search);
+    var fromHarbor = q.get("from") === "harbor";
+    if (fromHarbor) {
+      sessionStorage.setItem("harbor_managed", "1");
+      if (q.get("child")) sessionStorage.setItem("harbor_child", q.get("child"));
+    }
+    /* Managed mode: learners are added/removed in Harbor, so the app hides its own create/delete controls. */
+    window.HARBOR_MANAGED = sessionStorage.getItem("harbor_managed") === "1";
+    if (!fromHarbor) return;
+    var code = (q.get("family") || "").trim().toUpperCase();
+    if (/^[A-Z0-9-]{5,12}$/.test(code) && !localStorage.getItem("wordAdv_family")) localStorage.setItem("wordAdv_family", code);
+    q.delete("family"); q.delete("child");
+    var qs = q.toString();
+    history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+  } catch (e) {}
+})();
+</script>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Word Adventure</title>
@@ -109,8 +133,11 @@ h3{font-size:clamp(1.05rem,3.5vw,1.3rem);font-weight:700}
 </head>
 <body>
 <div id="root"></div>
+<script src="wa-books.js"></script>
+<script src="wa-speech.js"></script>
 <script src="wa-games.js"></script>
 <script src="wa-game-kit.js"></script>
+<script src="wa-game-alphabet.js"></script>
 <script src="wa-game-letterpop.js"></script>
 <script src="wa-game-rhymetime.js"></script>
 <script src="wa-game-wordbuilder.js"></script>
@@ -180,6 +207,7 @@ const mergeProfileLists=(local,remote,only)=>{
 // MERGE-END
 
 // ===== STORAGE =====
+const fmtFam=v=>{v=String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');return v.length>2?v.slice(0,2)+'-'+v.slice(2,6):v};
 const ls={g:(k,d=null)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch{return d}},s:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}},r:(k,d="")=>{try{return localStorage.getItem(k)||d}catch{return d}},w:(k,v)=>{try{localStorage.setItem(k,v)}catch{}}};
 const SK="wordAdv_v1",SK_C="wordAdv_country",SK_F="wordAdv_family",SK_PP="wordAdv_ppin";
 const AVATARS=["📚","🦉","🌟","🎨","🦊","🐱","🐶","🌈","🚀","🎵","🌻","🦋","🐢","🎭","🏰","🌙","📖","✨","🎪","🌸"];
@@ -553,7 +581,7 @@ function FamilySetup({onDone}){
       <button class="btn bp bw mt16" onClick=${()=>onDone(genCode(),"create")}>Create Family \u2728</button>
       <button class="bb mt12" onClick=${()=>setMode(null)}>\u2190 Back</button></div>`}
     ${mode==="j"&&html`<div class="card mt24"><h3>Join a Family</h3><label class="lbl mt12">Family Code</label>
-      <input class="inp" placeholder="WA-XXXX" value=${code} onInput=${e=>setCode(e.target.value.toUpperCase())} maxLength=${7}/>
+      <input class="inp" placeholder="WA-XXXX" value=${code} onInput=${e=>setCode(fmtFam(e.target.value))} maxLength=${7} autocorrect="off" spellcheck=${false}/>
       <button class="btn bp bw mt16" onClick=${()=>{if(code.length>=6)onDone(code.toUpperCase(),"join")}}>Join Family</button>
       <button class="bb mt12" onClick=${()=>setMode(null)}>\u2190 Back</button></div>`}
   </div></div>`;
@@ -599,17 +627,26 @@ function openGames(p){const G=window.WAGames;if(!G)return;
   G.configure({getCurrentPlayer:p?()=>({id:String(p.id),name:p.name,avatar:p.avatar}):null,onClose:()=>G.configure({getCurrentPlayer:null})});G.open()}
 if(window.WAGames){
   window.WAGames.configure({
+    // Game levels live on the learner profile (profile.gameLevels) so they sync to Firebase with the rest of the progress.
+    progress:{
+      load:(pid,gid)=>{try{const p=ls.g(SK,[]).find(x=>String(x.id)===String(pid));const v=p&&p.gameLevels&&p.gameLevels[gid];const old=parseInt(localStorage.getItem('wagames.lv.'+pid+'.'+gid),10)||0;return Math.max(v||0,old)||1}catch{return 1}},
+      save:(pid,gid,lv)=>{try{const p=ls.g(SK,[]).find(x=>String(x.id)===String(pid));if(p&&p.gameLevels&&p.gameLevels[gid]>=lv)return;const fn=q=>({...q,gameLevels:{...(q.gameLevels||{}),[gid]:Math.max(lv,(q.gameLevels||{})[gid]||0)}});if(window.__waUpdProf&&p)window.__waUpdProf(p.id,fn);else localStorage.setItem('wagames.lv.'+pid+'.'+gid,String(lv))}catch{}}
+    },
     getFamilyCode:()=>ls.r(SK_F,"")||"GUEST",
     getPlayers:()=>ls.g(SK,[]).map(p=>({id:String(p.id),name:p.name,avatar:p.avatar})),
     onResult:r=>{try{const k="wordAdv_gameResults";const all=ls.g(k,[]);all.push({...r,ts:Date.now()});ls.s(k,all.slice(-200))}catch{}}
   });
-  // Multiplayer TEST mode: open the site with ?mp=1 to switch on Realtime Database rooms. Off for everyone else.
-  if(/[?&]mp=1(&|$)/.test(location.search)){
-    const loadScript=src=>new Promise((ok,no)=>{const el=document.createElement("script");el.src=src;el.onload=ok;el.onerror=no;document.head.appendChild(el)});
-    loadScript("https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js").then(()=>loadScript("https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js")).then(()=>{
-      const gamesApp=window.firebase.initializeApp({...FIREBASE_CONFIG,databaseURL:"https://homeschool-math-default-rtdb.europe-west1.firebasedatabase.app"},"wa-games");
-      window.WAGames.configure({db:gamesApp.database()});
-    }).catch(()=>{});
+  // Multiplayer: switches itself on once the Realtime Database rules are published (see scripts\wa-deploy-rules.cmd).
+  // A quick read probe decides: if the rules still deny it, games stay solo-only and nothing breaks. Add ?mp=0 to force solo.
+  if(!/[?&]mp=0(&|$)/.test(location.search)){
+    setTimeout(()=>{
+      const loadScript=src=>new Promise((ok,no)=>{const el=document.createElement("script");el.src=src;el.onload=ok;el.onerror=no;document.head.appendChild(el)});
+      loadScript("https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js").then(()=>loadScript("https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js")).then(()=>{
+        const gamesApp=window.firebase.initializeApp({...FIREBASE_CONFIG,databaseURL:"https://homeschool-math-default-rtdb.europe-west1.firebasedatabase.app"},"wa-games");
+        const gdb=gamesApp.database();
+        return gdb.ref("wordGameRooms/AAAA/meta").once("value").then(()=>window.WAGames.configure({db:gdb}));
+      }).catch(()=>{});
+    },1200);
   }
 }
 
@@ -627,7 +664,7 @@ function App(){
   const[aTopic,setAT]=useState(null);const[aQs,setAQs]=useState([]);const[aIdx,setAI]=useState(0);const[aScore,setAS]=useState(0);const[aAns,setAA]=useState(false);const[aSel,setASl]=useState(null);
   const[fTopic,setFT]=useState(null);const[fCards,setFC]=useState([]);const[fIdx,setFI]=useState(0);const[fRev,setFR]=useState(false);const[fGot,setFG]=useState(0);const[fTot,setFTot]=useState(0);
   const[rBook,setRB]=useState(null);const[rIdx,setRI]=useState(0);const[rAns,setRA]=useState(false);const[rSel,setRSl]=useState(null);const[rScore,setRS]=useState(0);
-  const[rlSort,setRlSort]=useState("alpha-unread");const[rlGenre,setRlGenre]=useState("All");
+  const[rlSort,setRlSort]=useState("alpha-unread");const[rlGenre,setRlGenre]=useState("All");const[rlAll,setRlAll]=useState(false);
   const[vBook,setVBook]=useState(null);const[vIdx,setVIdx]=useState(0);const[vFlip,setVFlip]=useState(false);const[vQAns,setVQAns]=useState(false);const[vQSel,setVQSel]=useState(null);const[vScore,setVScore]=useState(0);
 
   // Refs for sync
@@ -705,6 +742,14 @@ function App(){
     syncingRef.current=false;
   },[]);
 
+  // Harbor hand-off: open straight to the learner chosen in Harbor once the family's profiles are available.
+  useEffect(()=>{
+    let hc=null;try{hc=sessionStorage.getItem("harbor_child")}catch(e){}
+    if(!hc)return;
+    const hp=profiles.find(x=>String(x.id)===hc);
+    if(hp){try{sessionStorage.removeItem("harbor_child")}catch(e){}setSel(hp.id);setScr("dash")}
+  },[profiles]);
+
   // Sync on startup
   useEffect(()=>{
     if(!familyCode)return;
@@ -748,6 +793,7 @@ function App(){
   const isE=prof?gB(prof.gradeId)==="early":false;
   const actLbl=prof?.terms?.activity||"Activity";
   const updProf=(id,fn)=>setProfiles(prev=>prev.map(p=>p.id===id?fn({...p}):p));
+  window.__waUpdProf=updProf;
   const cF={IE:"\uD83C\uDDEE\uD83C\uDDEA",UK:"\uD83C\uDDEC\uD83C\uDDE7",US:"\uD83C\uDDFA\uD83C\uDDF8"};
   const tapRef=useRef(0);const tapTm=useRef(null);
   const Ntf=ntf?html`<div class="ntf">${ntf}</div>`:null;
@@ -793,8 +839,8 @@ function App(){
         <div style=${{fontSize:"2.6rem",lineHeight:1,marginBottom:6}}>${p.avatar}</div>
         <div style=${{fontFamily:"Baloo 2",fontWeight:700,fontSize:"1rem",color:"var(--navy)"}}>${p.name}</div>
         <div style=${{fontSize:".76rem",color:"var(--muted)"}}>${gG(p.gradeId).e} ${gL(p.gradeId,country)}</div></div>`)}
-      <div class="pcard" style=${{background:"#f0f4ff",border:"3px dashed #c0d0f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:120}}
-        onClick=${()=>setPinCb(()=>()=>{setPinCb(null);setScr("create")})}><div style=${{fontSize:"2rem",color:"var(--blue)"}}>+</div><div style=${{fontWeight:700,color:"var(--blue)",fontSize:".82rem"}}>Add Learner</div></div>
+      ${!window.HARBOR_MANAGED&&html`<div class="pcard" style=${{background:"#f0f4ff",border:"3px dashed #c0d0f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:120}}
+        onClick=${()=>setPinCb(()=>()=>{setPinCb(null);setScr("create")})}><div style=${{fontSize:"2rem",color:"var(--blue)"}}>+</div><div style=${{fontWeight:700,color:"var(--blue)",fontSize:".82rem"}}>Add Learner</div></div>`}
     </div>
     <div class="mt24 fx g12 fw"><button class="btn bs" style=${{flex:1}} onClick=${()=>setPinCb(()=>()=>{setPinCb(null);setScr("parent")})}>\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67 Parent Mode</button><button class="btn br" style=${{flex:1}} onClick=${()=>openGames(null)}>\uD83C\uDFAE Play Games</button></div>
     ${familyCode&&html`<div class="tc mt16"><span class="tm" style=${{fontSize:".78rem"}}>Family: ${familyCode}</span></div>`}
@@ -810,7 +856,7 @@ function App(){
     ${pinCb&&html`<${PinModal} title="Parent PIN" pin=${parentPin} onOk=${pinCb} onClose=${()=>setPinCb(null)}/>`}
     ${Ntf}</div>`;
 
-  if(scr==="dash"&&prof){const band=gB(prof.gradeId);const showR=["elementary","middle","high"].includes(band);
+  if(scr==="dash"&&prof){const band=gB(prof.gradeId);const showR=["elementary","middle","high"].includes(band);const showL=true;
     return html`<div class="app"><button class="bb" onClick=${()=>{setSel(null);setScr("home")}}>\u2190 Home</button>
       <div class="fx ac g12 mt8 mb16"><span style=${{fontSize:"2.4rem"}}>${prof.avatar}</span><div><h2 style=${{margin:0}}>${prof.name}</h2><span class="tm" style=${{fontSize:".82rem"}}>${gG(prof.gradeId).e} ${gL(prof.gradeId,country)}</span></div></div>
       <div style=${{display:"grid",gap:12}}>
@@ -818,7 +864,7 @@ function App(){
         <button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#7C5CFC",color:"#fff"}} onClick=${()=>setScr("tsel-a")}>\uD83C\uDF1F ${actLbl} Mode</button>
         <button class="btn br bw" style=${{fontSize:"1.05rem",padding:"16px"}} onClick=${()=>openGames(prof)}>\uD83C\uDFAE Play Games</button>
         ${showR&&html`<button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#E8651A",color:"#fff"}} onClick=${()=>setScr("reading")}>\uD83D\uDCD6 Reading Companion</button>`}
-        ${showR&&html`<button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#2A9D8F",color:"#fff"}} onClick=${()=>setScr("booklist")}>\uD83D\uDCDA My Reading List</button>`}
+        ${showL&&html`<button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#2A9D8F",color:"#fff"}} onClick=${()=>setScr("booklist")}>\uD83D\uDCDA ${band==="early"?"Story Time Books":"My Reading List"}</button>`}
         <button class="btn bs bw" onClick=${()=>setScr("progress")}>\uD83D\uDCCA My Progress</button></div>${Ntf}</div>`}
 
   if((scr==="tsel-f"||scr==="tsel-a")&&prof){const mode=scr==="tsel-f"?"flash":"act";const topics=topicsFor(prof.gradeId);
@@ -895,7 +941,7 @@ function App(){
   // ===== READING LIST =====
   if(scr==="booklist"&&prof){
     const band=gB(prof.gradeId);
-    const allBooks=getAllBooksForBand(band);
+    const WB=window.WA_BOOKS;const allBooks=WB?(rlAll?WB.all:WB.forGrade(prof.gradeId)):getAllBooksForBand(band);const readTogether=["early","foundation"].includes(band)&&["PS","PK","K"].includes(prof.gradeId);
     const rl=prof.readingList||{};
     const customBooks=prof.customBooks||[];
     const getStatus=(key)=>rl[key]||"notstarted";
@@ -948,7 +994,9 @@ function App(){
         </div>
       </div>
 
-      <h3 class="mb8">\uD83D\uDCDA Recommended Books ${rlGenre!=="All"?" \u2014 "+rlGenre:""}</h3>
+      <h3 class="mb8">\uD83D\uDCDA ${rlAll?"All Books, Nursery to Grade 12":"Books for "+gL(prof.gradeId,country)} ${rlGenre!=="All"?" \u2014 "+rlGenre:""}</h3>
+      ${readTogether&&!rlAll&&html`<div class="banner bi mb8">\uD83E\uDDF8 These are for reading together. Snuggle up and take turns!</div>`}
+      ${WB&&html`<div class="no-print mb12"><button class=${"rl-pip"+(rlAll?" on-reading":"")} onClick=${()=>{setRlAll(!rlAll);setRlGenre("All")}}>${rlAll?"\u2190 Back to my grade":"\uD83D\uDD0E Show books for other grades"}</button></div>`}
       ${(()=>{
         let filtered=allBooks.filter(b=>rlGenre==="All"||b.g===rlGenre);
         const sortFn=(a,b)=>{
@@ -960,14 +1008,14 @@ function App(){
           return 0;
         };
         filtered.sort(sortFn);
-        return filtered.map((b,i)=>{const key="book_"+b.t;const s=getStatus(key);const free=FREE_BOOKS[b.t];
+        return filtered.map((b,i)=>{const key="book_"+b.t;const s=getStatus(key);const free=FREE_BOOKS[b.t]||b.f;
         return html`<div key=${key} class="rl-book" style=${{animationDelay:i*.03+"s",borderLeft:s==="finished"?"4px solid var(--mint)":s==="reading"?"4px solid var(--blue)":"4px solid #e8ecf0"}}>
           <div class="rl-check ${s==="finished"?"done":s==="reading"?"reading":""}" onClick=${()=>{const next=statusCycle[(statusCycle.indexOf(s)+1)%3];setStatus(key,next)}}>
             ${s==="finished"?"\u2713":s==="reading"?"\uD83D\uDC40":""}
           </div>
           <div style=${{flex:1}}>
             <div style=${{fontWeight:700,fontSize:".95rem",color:s==="finished"?"var(--mint)":"var(--navy)"}}>${b.e} ${b.t}${free&&html`<span class="rl-free">Free</span>`}</div>
-            <div class="tm" style=${{fontSize:".8rem"}}>by ${b.a}${b.g&&html` \u00B7 <span style=${{color:"var(--blue)"}}>${b.g}</span>`}</div>
+            <div class="tm" style=${{fontSize:".8rem"}}>by ${b.a}${b.g&&html` \u00B7 <span style=${{color:"var(--blue)"}}>${b.g}</span>`}${WB&&b.lo!=null&&html` \u00B7 ${WB.gradeLabel(b)}`}</div>
             <div class="rl-progress no-print">
               ${statusCycle.map(st=>html`<button key=${st} class=${"rl-pip"+(s===st?" on-"+st:"")} onClick=${()=>setStatus(key,st)}>${statusEmoji[st]} ${statusLabel[st]}</button>`)}
             </div>
@@ -1086,7 +1134,7 @@ function App(){
         <div class="fx ac g12 mb12"><span style=${{fontSize:"1.8rem"}}>${p.avatar}</span><div><div style=${{fontWeight:700}}>${p.name}</div><div class="tm" style=${{fontSize:".8rem"}}>${gG(p.gradeId).e} ${gL(p.gradeId,country)}</div></div></div>
         <div class="fx fw g8">${topics.slice(0,6).map(t=>html`<${Badge} key=${t.k} level=${masLvl(p.topicProgress?.[t.k])}/>`)}</div>
         <div class="fx g8 mt12"><button class="btn bs" style=${{fontSize:".8rem",padding:"8px 14px"}} onClick=${()=>{setSel(p.id);setScr("progress")}}>Progress</button>
-        <button class="btn br" style=${{fontSize:".8rem",padding:"8px 14px"}} onClick=${()=>{if(confirm("Remove "+p.name+"?"))setProfiles(prev=>prev.filter(x=>x.id!==p.id))}}>Remove</button></div></div>`})}</div>`}
+        ${!window.HARBOR_MANAGED&&html`<button class="btn br" style=${{fontSize:".8rem",padding:"8px 14px"}} onClick=${()=>{if(confirm("Remove "+p.name+"?"))setProfiles(prev=>prev.filter(x=>x.id!==p.id))}}>Remove</button>`}</div></div>`})}</div>`}
     ${parentTab==="personalise"&&html`<div>${profiles.map(p=>html`<div key=${p.id} class="card">
       <div class="fx ac g12 mb12"><span style=${{fontSize:"1.5rem"}}>${p.avatar}</span><h3>${p.name}</h3></div>
       <label class="lbl">Activity Name</label><input class="inp" value=${p.terms?.activity||"Activity"} onInput=${e=>updProf(p.id,pr=>{pr.terms={...pr.terms,activity:e.target.value};return pr})}/>
@@ -1110,7 +1158,7 @@ function App(){
 
       <div class="card"><h3>\uD83E\uDD1D Merge Another Family</h3>
         <p class="tm mt8" style=${{fontSize:".82rem"}}>Bring learners from another family code (Word or Math Adventure) into this one. Nothing is deleted or changed in the other family, and nothing here is overwritten.</p>
-        <input class="inp mt8" placeholder="WA-XXXX or MA-XXXX" value=${mgCode} maxLength=${7} onInput=${e=>{setMgCode(e.target.value.toUpperCase());setMgFound(null)}}/>
+        <input class="inp mt8" placeholder="WA-XXXX or MA-XXXX" value=${mgCode} maxLength=${7} onInput=${e=>{setMgCode(fmtFam(e.target.value));setMgFound(null)}} autocorrect="off" spellcheck=${false}/>
         <button class="btn bs bw mt12" disabled=${mgBusy||mgCode.length<6||mgCode===familyCode} onClick=${async()=>{
           setMgBusy(true);const r=await fbLoad(mgCode);setMgBusy(false);
           if(!r||!Array.isArray(r.profiles)||!r.profiles.length){setMgFound(null);notify("No learners found for "+mgCode,3500);return}

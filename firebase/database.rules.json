@@ -15,6 +15,12 @@
         ".write": "$family.matches(/^[A-Za-z0-9_-]{3,24}$/)"
       }
     },
+    "gameRoomsPublic": {
+      ".read": true,
+      "$code": {
+        ".write": "$code.matches(/^[A-Z]{4}$/)"
+      }
+    },
     "wordGameRooms": {
       "$code": {
         ".read": "$code.matches(/^[A-Z]{4}$/)",
@@ -28,6 +34,12 @@
       "$family": {
         ".read": "$family.matches(/^[A-Za-z0-9_-]{3,24}$/)",
         ".write": "$family.matches(/^[A-Za-z0-9_-]{3,24}$/)"
+      }
+    },
+    "wordGameRoomsPublic": {
+      ".read": true,
+      "$code": {
+        ".write": "$code.matches(/^[A-Z]{4}$/)"
       }
     }
   }

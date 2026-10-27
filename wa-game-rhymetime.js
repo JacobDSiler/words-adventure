@@ -113,6 +113,7 @@
     emoji: '🎵',
     blurb: 'Hear the rhyme, find the match',
     grades: 'Ages 3 to 7',
+    readAloud: true, speakChoices: true,
     prompt: 'Which one rhymes?',
     levels: LV,
     makeSpec: function (rng, cfg) {
@@ -151,7 +152,8 @@
         return {
           question: 'Which word is in the -' + fam + ' family?', visual: K.bigHtml('_' + fam),
           choices: rng.shuffle(ch), answer: ans, cols: 2,
-          explain: ans + ' ends with -' + fam + ': ' + FAM[fam].slice(0, 4).join(', ')
+          explain: ans + ' ends with -' + fam + ': ' + FAM[fam].slice(0, 4).join(', '),
+          say: ['Which word is in the ' + fam.split('').join(' ') + ' family?'], sayReveal: FAM[fam].slice(0, 4)
         };
       }
       if (cfg.kind === 'couplet') {
@@ -159,6 +161,8 @@
         return {
           question: 'Finish the rhyme!', visual: '<div class="wk-sent">' + K.esc(c[0]) + '<br>' + K.esc(c[1]).replace('___', '<span class="wk-gap">&nbsp;</span>') + '</div>',
           choices: rng.shuffle(c.slice(2)), answer: c[2], cols: 2,
+          say: ['Finish the rhyme!', c[0], c[1].replace('___', 'blank')],
+          sayReveal: [c[0], c[1].replace('___', c[2])],
           explain: c[2] + ' rhymes with ' + c[0].replace(/[,.!?]+$/, '').split(' ').pop()
         };
       }

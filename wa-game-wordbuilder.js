@@ -44,6 +44,8 @@
     ['journey', 'A long trip from one place to another'], ['mirror', 'You look at yourself in it'], ['bubble', 'A thin ball of soap and air'],
     ['rabbit', 'A small animal with long ears that hops'], ['ladder', 'You climb up it to reach high places'], ['happen', 'To take place']];
 
+  var SP = root.WASpeech;
+  function wd(x) { return SP ? SP.wordItem(x) : x; }
   var ALPHA = 'abcdefghijklmnopqrstuvwxyz'.split('');
   var LV = [null,
     { label: 'Spell 3-letter words (with a picture)', kind: 'pic', list: W3, ms: 25000 },
@@ -69,20 +71,21 @@
     emoji: '🧱',
     blurb: 'Tap the letters to spell the word',
     grades: 'Ages 4 to 9',
+    readAloud: true,
     prompt: 'Tap the letters in order, then Check!',
     levels: LV,
     makeSpec: function (rng, cfg) {
       var it, w;
       if (cfg.kind === 'pic') {
         it = rng.pick(cfg.list);
-        return { question: 'Spell the word!', visual: K.emojiHtml(it[1]), pieces: tiles(rng, it[0], cfg.decoy || 0), target: it[0].split(''), join: '', explain: it[0] };
+        return { question: 'Spell the word!', visual: K.emojiHtml(it[1]), pieces: tiles(rng, it[0], cfg.decoy || 0), target: it[0].split(''), join: '', explain: it[0], say: ['Spell', wd(it[0])], sayReveal: [wd(it[0]), it[0].split('').join(', ')] };
       }
       if (cfg.kind === 'sight') {
         it = rng.pick(SIGHT);
-        return { question: 'Spell the missing word!', visual: K.sentHtml(it[1]), pieces: tiles(rng, it[0], 0), target: it[0].split(''), join: '', explain: it[1].replace('___', it[0]) };
+        return { question: 'Spell the missing word!', visual: K.sentHtml(it[1]), pieces: tiles(rng, it[0], 0), target: it[0].split(''), join: '', explain: it[1].replace('___', it[0]), say: ['Spell the missing word', wd(it[0]), it[1].replace('___', 'blank')], sayReveal: [it[1].replace('___', it[0])] };
       }
       it = rng.pick(TRICKY);
-      return { question: 'Spell the word that means:', visual: '<div class="wk-sent">' + K.esc(it[1]) + '</div>', pieces: tiles(rng, it[0], cfg.decoy || 0), target: it[0].split(''), join: '', explain: it[0] };
+      return { question: 'Spell the word that means:', visual: '<div class="wk-sent">' + K.esc(it[1]) + '</div>', pieces: tiles(rng, it[0], cfg.decoy || 0), target: it[0].split(''), join: '', explain: it[0], say: ['Spell the word that means', it[1], wd(it[0])], sayReveal: [wd(it[0]), it[0].split('').join(', ')] };
     }
   });
 })(typeof window !== 'undefined' ? window : globalThis);

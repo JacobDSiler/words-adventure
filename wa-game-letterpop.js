@@ -8,6 +8,11 @@
   var WAG = root.WAGames, K = WAG && WAG.kit;
   if (!K) throw new Error('Load wa-games.js and wa-game-kit.js before wa-game-letterpop.js');
 
+  var SP = root.WASpeech;
+  function nm(l) { return SP ? SP.nameItem(l) : l; }
+  function sn(l) { return SP ? SP.soundItem(l) : l; }
+  function wd(w) { return SP ? SP.wordItem(w) : w; }
+
   var UP = 'ABCDEFGHIJKLMNOPRSTUVWZ'.split('');           // letters used for matching (no Q / X / Y confusions)
   // [letter, emoji, word]  first-letter pictures that are hard to mistake for something else
   var START = [
@@ -62,33 +67,34 @@
     blurb: 'Letters, sounds and picture clues',
     grades: 'Ages 3 to 6',
     prompt: 'Tap the letter!',
+    readAloud: true, speakChoices: true,
     levels: LV,
     makeSpec: function (rng, cfg) {
       var L, set, a, others, item, ch;
       if (cfg.kind === 'case') {
         L = rng.pick(UP);
         others = pickOthers(rng, UP, [L], 3).map(lower);
-        return { question: 'Find the small letter for', visual: K.bigHtml(L), choices: rng.shuffle([lower(L)].concat(others)), answer: lower(L), big: true, cols: 4, explain: L + ' and ' + lower(L) + ' are the same letter' };
+        return { question: 'Find the small letter for', visual: K.bigHtml(L), choices: rng.shuffle([lower(L)].concat(others)), answer: lower(L), big: true, cols: 4, explain: L + ' and ' + lower(L) + ' are the same letter', say: ['Find the small letter for', nm(L)], sayReveal: ['Capital', nm(L), 'and small', nm(L), 'are the same letter'] };
       }
       if (cfg.kind === 'pairs') {
         // b / d / p look alike: a picture says which one starts the word
         var PR = rng.pick([['b', '\uD83C\uDF4C', 'banana'], ['d', '\uD83D\uDC36', 'dog'], ['p', '\uD83D\uDC27', 'penguin'], ['b', '\uD83D\uDC1D', 'bee'], ['d', '\uD83E\uDD86', 'duck'], ['p', '\uD83C\uDF55', 'pizza'], ['b', '\uD83D\uDEB2', 'bike'], ['d', '\uD83E\uDD95', 'dinosaur'], ['b', '\uD83D\uDC3B', 'bear'], ['b', '\uD83D\uDC26', 'bird'], ['d', '\uD83C\uDF69', 'donut'], ['d', '\uD83E\uDD41', 'drum'], ['p', '\uD83C\uDF50', 'pear'], ['p', '\uD83C\uDF4D', 'pineapple']]);
-        return { question: 'Which small letter starts it?', visual: K.emojiHtml(PR[1]), choices: ['b', 'd', 'p', 'q'], answer: PR[0], big: true, cols: 4, explain: PR[2] + ' starts with ' + PR[0] };
+        return { question: 'Which small letter starts it?', visual: K.emojiHtml(PR[1]), choices: ['b', 'd', 'p', 'q'], answer: PR[0], big: true, cols: 4, explain: PR[2] + ' starts with ' + PR[0], say: [wd(PR[2]), 'Which small letter starts it?'], sayReveal: [wd(PR[2]), 'starts with', nm(PR[0]), sn(PR[0])] };
       }
       if (cfg.kind === 'first') {
         item = rng.pick(START);
         others = pickOthers(rng, START.map(function (s) { return s[0]; }), [item[0], item[0] === 'C' ? 'K' : item[0] === 'K' ? 'C' : ''], 3);
-        return { question: 'What letter does it start with?', visual: K.emojiHtml(item[1]), choices: rng.shuffle([item[0]].concat(others)), answer: item[0], big: true, cols: 4, explain: item[0] + ' is for ' + item[2] };
+        return { question: 'What letter does it start with?', visual: K.emojiHtml(item[1]), choices: rng.shuffle([item[0]].concat(others)), answer: item[0], big: true, cols: 4, explain: item[0] + ' is for ' + item[2], say: [wd(item[2]), 'What letter does it start with?'], sayReveal: [nm(item[0]), sn(item[0]), nm(item[0]), 'is for', wd(item[2])] };
       }
       if (cfg.kind === 'sound') {
         L = rng.pick(SOUND_KEYS);
         others = pickOthers(rng, SOUND_KEYS, [L], 3);
-        return { question: 'Which letter says "' + SOUND[L] + '"?', visual: '', choices: rng.shuffle([L].concat(others)), answer: L, big: true, cols: 4, explain: L + ' says "' + SOUND[L] + '"' };
+        return { question: 'Which letter says "' + SOUND[L] + '"?', visual: '', choices: rng.shuffle([L].concat(others)), answer: L, big: true, cols: 4, explain: L + ' says "' + SOUND[L] + '"', say: ['Which letter says', sn(L)], sayReveal: [nm(L), 'says', sn(L)] };
       }
       if (cfg.kind === 'last') {
         item = rng.pick(END);
         others = pickOthers(rng, END_LETTERS, [item[0]], 3);
-        return { question: 'What letter does it end with?', visual: K.emojiHtml(item[1]), choices: rng.shuffle([item[0]].concat(others)), answer: item[0], big: true, cols: 4, explain: item[2] + ' ends with ' + item[0] };
+        return { question: 'What letter does it end with?', visual: K.emojiHtml(item[1]), choices: rng.shuffle([item[0]].concat(others)), answer: item[0], big: true, cols: 4, explain: item[2] + ' ends with ' + item[0], say: [wd(item[2]), 'What letter does it end with?'], sayReveal: [wd(item[2]), 'ends with', nm(item[0]), sn(item[0])] };
       }
       // digraphs and blends: show the picture, pick the starting chunk
       var chunks = cfg.kind === 'digraph' ? DIGRAPHS : BLENDS;
@@ -98,7 +104,8 @@
       return {
         question: 'How does it start?', visual: K.emojiHtml(item[1]),
         choices: rng.shuffle([item[0]].concat(others)).map(function (c) { return { v: c, label: c.toLowerCase() }; }), answer: item[0], big: true, cols: 4,
-        explain: item[2] + ' starts with ' + item[0].toLowerCase()
+        explain: item[2] + ' starts with ' + item[0].toLowerCase(),
+        say: [wd(item[2]), 'How does it start?'], sayReveal: [wd(item[2]), 'starts with', item[0].toLowerCase()]
       };
     }
   });

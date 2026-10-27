@@ -267,9 +267,15 @@
         room.players[player.id] = player;
         return ref.set(room).then(function () {
           s.attach(code, player);
+          var rec = { game: meta.game, mode: meta.mode, host: player.name, hostAvatar: player.avatar || '', n: 1, t: TS };
           var ix = s.db.ref('wordGameRoomsByFamily/' + s.family + '/' + code);
-          ix.set({ game: meta.game, mode: meta.mode, host: player.name, t: TS });
+          ix.set(rec);
           ix.onDisconnect().remove();
+          if (meta.public !== false) { // listed for every family under "Find a game"; harmless if the public list is not enabled yet
+            var px = s.db.ref('wordGameRoomsPublic/' + code);
+            px.set(rec).catch(function () { });
+            px.onDisconnect().remove();
+          }
           return code;
         });
       });
@@ -291,9 +297,19 @@
       return s.off;
     },
     setPlayer: function (id, patch) { return this.ref.child('players/' + id).update(patch); },
+    closeIndex: function () {
+      var s = this;
+      s.db.ref('wordGameRoomsPublic/' + s.code).remove().catch(function () { });
+      return s.db.ref('wordGameRoomsByFamily/' + s.family + '/' + s.code).remove();
+    },
+    setCount: function (n) {
+      var s = this;
+      s.db.ref('wordGameRoomsPublic/' + s.code + '/n').set(n).catch(function () { });
+      return s.db.ref('wordGameRoomsByFamily/' + s.family + '/' + s.code + '/n').set(n);
+    },
     start: function () {
       var s = this;
-      s.db.ref('wordGameRoomsByFamily/' + s.family + '/' + s.code).remove();
+      s.closeIndex();
       return s.ref.child('state').transaction(function (st) {
         if (st && st.phase === 'lobby') return { phase: 'play', round: 0, roundStartAt: s.now() + GAP + 600 };
         return undefined;
@@ -321,24 +337,34 @@
       var ref = this.ref, s = this;
       if (s.off) s.off();
       if (!ref) return Promise.resolve();
-      if (isHost) s.db.ref('wordGameRoomsByFamily/' + s.family + '/' + s.code).remove();
+      if (isHost) s.closeIndex();
       ref.child('players/' + id).onDisconnect().cancel();
       return ref.child('players/' + id).remove()
         .then(function () { return ref.child('players').once('value'); })
         .then(function (sn) { if (!sn.exists()) return ref.remove(); }); // last one out turns off the lights
     }
   };
+  // open rooms = this family's list + the public list (every family), merged by room code
   FirebaseTransport.watchFamily = function (db, fam, cb) {
-    var ref = db.ref('wordGameRoomsByFamily/' + fam);
-    var fn = ref.on('value', function (sn) {
-      var v = sn.val() || {}, out = [];
-      Object.keys(v).forEach(function (k) {
+    var famRooms = {}, pubRooms = {};
+    function parse(v, out, mine) {
+      Object.keys(v || {}).forEach(function (k) {
         var r = v[k];
-        if (r && Date.now() - (r.t || 0) < 6 * 3600e3) out.push({ code: k, game: r.game, mode: r.mode, host: r.host });
+        if (r && r.game && Date.now() - (r.t || 0) < 6 * 3600e3) out[k] = { code: k, game: r.game, mode: r.mode, host: r.host, avatar: r.hostAvatar || '', n: r.n || 1, t: r.t || 0, mine: mine };
       });
+    }
+    function emit() {
+      var all = {}, k;
+      for (k in pubRooms) all[k] = pubRooms[k];
+      for (k in famRooms) all[k] = famRooms[k];
+      var out = Object.keys(all).map(function (c) { return all[c]; });
+      out.sort(function (x, y) { return (y.mine - x.mine) || (y.t - x.t); });
       cb(out);
-    });
-    return function () { ref.off('value', fn); };
+    }
+    var fref = db.ref('wordGameRoomsByFamily/' + fam), pref = db.ref('wordGameRoomsPublic');
+    var ff = fref.on('value', function (sn) { famRooms = {}; parse(sn.val(), famRooms, true); emit(); }, function () { });
+    var pf = pref.on('value', function (sn) { pubRooms = {}; parse(sn.val(), pubRooms, false); emit(); }, function () { /* public list not enabled yet */ });
+    return function () { fref.off('value', ff); pref.off('value', pf); };
   };
 
   /* ============================== Match: one play-through ============================== */
@@ -354,14 +380,23 @@
       now: function () { return t.now(); },
       sfx: WAGames.sfx,
       mode: M.kind,
-      answer: function (ok, info) { M.answer(ok, info); }
+      answer: function (ok, info) { M.answer(ok, info); },
+      // Relaxed timer (solo only): the clock may top itself up while the learner is still working.
+      relaxed: function () { return M.mode === 'solo' && WAGames.relaxed(); },
+      extend: function (ms) {
+        if (!(M.mode === 'solo' && WAGames.relaxed()) || !M.roundLive || M.answered || !M.spec) return false;
+        M.spec.durationMs += ms;
+        clearTimeout(M.timeoutT);
+        M.timeoutT = setTimeout(function () { if (!M.answered) M.answer(false, { timeout: true }); }, Math.max(0, M.startAt + M.spec.durationMs - M.t.now()));
+        return true;
+      }
     };
   }
 
   Match.prototype.create = function () {
     var M = this, g = M.g;
     M.level = M.me.level = loadLevel(g.id, M.me.pid);
-    var meta = { game: g.id, mode: M.mode, seed: newSeed(), hostId: M.me.id, rounds: g.rounds };
+    var meta = { game: g.id, mode: M.mode, seed: newSeed(), hostId: M.me.id, rounds: g.rounds, public: M.mode === 'solo' ? false : M.S.pub !== false };
     M.t.create(meta, M.me).then(function () { M.run(); },
       function (e) { M.S.toast('Could not start: ' + (e && e.message || e)); });
   };
@@ -429,6 +464,7 @@
   Match.prototype.renderLobby = function (room) {
     var M = this, g = M.g, S = M.S, P = room.players || {}, ids = Object.keys(P);
     var lv = P[M.me.id] ? P[M.me.id].level : M.level;
+    if (M.isHost && M.t.setCount && ids.length && ids.length !== M._cnt) { M._cnt = ids.length; M.t.setCount(ids.length); }
     S.title.textContent = g.name;
     var nodes = [
       h('div', { class: 'wag-em big', text: g.emoji || '🎲' }),
@@ -438,7 +474,7 @@
       nodes.push(
         h('div', { class: 'wag-sub', text: 'Room code' }),
         h('div', { class: 'wag-code', text: M.t.code || '' }),
-        h('div', { class: 'wag-sub', text: 'Family members see this room automatically. Cousins type the code.' })
+        h('div', { class: 'wag-sub', text: (M.room && M.room.meta && M.room.meta.public === false) ? 'Only your family sees this room. Friends can type the code.' : 'Everyone can find this under Find a game, or type the code.' })
       );
     }
     nodes.push(h('div', { class: 'wag-chips' }, ids.map(function (id) {
@@ -625,14 +661,25 @@
     var S = this;
     S.title = h('div', { class: 'wag-ttl', text: 'Word Games' });
     S.mute = h('button', { class: 'wag-icon', text: '🔊', 'aria-label': 'Sound', onclick: function () { S.mute.textContent = WAGames.sfx.toggle() ? '🔇' : '🔊'; } });
+    S.say = h('button', { class: 'wag-icon', text: '🗣️', 'aria-label': 'Read aloud', onclick: function () {
+      var SP = root.WASpeech; if (!SP) return;
+      var nowOn = SP.on(S.g && S.g.readAloud); SP.setOn(!nowOn); if (nowOn) SP.stop(); S.paintSay(); S.toast(nowOn ? 'Read aloud is off' : 'Read aloud is on');
+    } });
     S.body = h('div', { class: 'wag-body' });
     S.ov = h('div', { class: 'wag-ov' }, [
-      h('div', { class: 'wag-top' }, [h('button', { class: 'wag-icon', text: '✕', 'aria-label': 'Close', onclick: function () { S.close(); } }), S.title, S.mute]),
+      h('div', { class: 'wag-top' }, [h('button', { class: 'wag-icon', text: '✕', 'aria-label': 'Close', onclick: function () { S.close(); } }), S.title, S.say, S.mute]),
       S.body
     ]);
     document.body.appendChild(S.ov);
   }
+  Shell.prototype.paintSay = function () {
+    var SP = root.WASpeech; if (!SP || !this.say) return;
+    var on = SP.on(this.g && this.g.readAloud);
+    this.say.style.opacity = on ? '1' : '0.4'; this.say.classList.toggle('sel', on);
+    this.say.style.display = (SP.can || Object.keys(SP.clips).length) ? '' : 'none';
+  };
   Shell.prototype.set = function (nodes) {
+    this.paintSay();
     var b = this.body; b.innerHTML = '';
     nodes.forEach(function (n) { if (n) b.appendChild(n); });
     b.scrollTop = 0;
@@ -643,6 +690,7 @@
     setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 1900);
   };
   Shell.prototype.endMatch = function () {
+    if (root.WASpeech) root.WASpeech.stop();
     if (this.match) { this.match.destroy(); this.match = null; }
     if (this.unwatch) { this.unwatch(); this.unwatch = null; }
   };
@@ -661,25 +709,65 @@
   }
 
   Shell.prototype.picker = function () {
-    var S = this; S.endMatch(); S.title.textContent = 'Word Games';
+    var S = this; S.endMatch(); S.title.textContent = 'Word Games'; S.g = null;
     var cards = Object.keys(WAGames.games).map(function (id) {
       var g = WAGames.games[id];
       return card(g.emoji || '🎲', g.name, g.blurb, g.grades, function () { S.who(g); });
     });
-    S.set([h('h2', { class: 'wag-h', text: 'Pick a game!' }), h('div', { class: 'wag-grid' }, cards)]);
+    var nodes = [h('h2', { class: 'wag-h', text: 'Pick a game!' })];
+    if (S.unwatch) { S.unwatch(); S.unwatch = null; }
+    if (WAGames.cfg.db) {
+      var find = h('button', { class: 'wag-btn gold', text: '🔎 Find a game to join', onclick: function () { S.findGames(); } });
+      nodes.push(find);
+      S.unwatch = FirebaseTransport.watchFamily(WAGames.cfg.db, familyCode(), function (rooms) {
+        find.textContent = rooms.length ? '🔎 Find a game to join (' + rooms.length + ' open)' : '🔎 Find a game to join';
+      });
+    }
+    nodes.push(h('div', { class: 'wag-grid' }, cards));
+    if (root.WASpeech && root.WASpeech.recorderPanel) nodes.push(card('🎙️', 'Record letter sounds', 'Use your own voice for the letters', 'For parents', function () { S.set([root.WASpeech.recorderPanel(function () { S.picker(); })]); }, true));
+    S.set(nodes);
   };
 
-  Shell.prototype.who = function (g) {
+  // the lobby: every open room, from every family, whatever the game
+  Shell.prototype.findGames = function () {
+    var S = this;
+    if (!S.me) return S.who(null, function () { S.findGames(); });
+    var err = h('div', { class: 'wag-err' }), list = h('div', { class: 'wag-list' });
+    var input = h('input', { class: 'wag-input code', maxlength: '4', placeholder: 'ABCD', autocapitalize: 'characters' });
+    if (S.unwatch) S.unwatch();
+    S.title.textContent = 'Game lobby';
+    S.unwatch = FirebaseTransport.watchFamily(WAGames.cfg.db, familyCode(), function (rooms) {
+      list.innerHTML = '';
+      rooms.forEach(function (r) {
+        var g = WAGames.games[r.game]; if (!g) return;
+        list.appendChild(card(g.emoji || '🎲', (r.avatar ? r.avatar + ' ' : '') + (r.host || 'Someone') + '’s ' + (MODE_NAME[r.mode] || r.mode),
+          g.name + ' · ' + r.n + (r.n === 1 ? ' player waiting' : ' players waiting'), r.mine ? 'Your family' : 'Another family', function () { S.joinRoom(r.code, err); }, true));
+      });
+      if (!list.children.length) list.appendChild(h('div', { class: 'wag-sub', text: 'No open games right now. Start one from any game and it shows up here for every family.' }));
+    });
+    S.set([
+      h('h2', { class: 'wag-h', text: 'Open games' }),
+      h('div', { class: 'wag-sub', text: 'Games from every family show here. Tap one to join.' }),
+      list,
+      h('div', { class: 'wag-sub', text: 'Playing with a friend? Type their room code.' }),
+      h('div', { class: 'wag-row' }, [input, h('button', { class: 'wag-btn alt', text: 'Join', onclick: function () { S.joinRoom(input.value, err); } })]),
+      err,
+      h('button', { class: 'wag-btn alt', text: 'Back', onclick: function () { S.picker(); } })
+    ]);
+  };
+
+  Shell.prototype.who = function (g, after) {
     var S = this, cur = WAGames.cfg.getCurrentPlayer && WAGames.cfg.getCurrentPlayer();
-    if (cur) { S.me = mkPlayer(cur); return S.modes(g); }
+    var next = function () { return after ? after() : S.modes(g); };
+    if (cur) { S.me = mkPlayer(cur); return next(); }
     var ps = listPlayers();
-    var cards = ps.map(function (p) { return card(p.avatar || '🙂', p.name, '', '', function () { S.me = mkPlayer(p); S.modes(g); }); });
-    cards.push(card('👋', 'Someone else', 'Visiting? Type a name', '', function () { S.guest(g); }));
+    var cards = ps.map(function (p) { return card(p.avatar || '🙂', p.name, '', '', function () { S.me = mkPlayer(p); next(); }); });
+    cards.push(card('👋', 'Someone else', 'Visiting? Type a name', '', function () { S.guest(g, after); }));
     S.set([h('h2', { class: 'wag-h', text: "Who's playing?" }), h('div', { class: 'wag-grid' }, cards),
       h('button', { class: 'wag-btn alt', text: 'Back', onclick: function () { S.picker(); } })]);
   };
 
-  Shell.prototype.guest = function (g) {
+  Shell.prototype.guest = function (g, after) {
     var S = this, avatar = '🐱', AV = ['🐱', '🐶', '🦄', '🚀', '🐸', '🌟', '🎈', '🐼'];
     var input = h('input', { class: 'wag-input', maxlength: '14', placeholder: 'Your name' });
     var row = h('div', { class: 'wag-chips' }, AV.map(function (a) {
@@ -691,13 +779,21 @@
     S.set([h('h2', { class: 'wag-h', text: "What's your name?" }), input, row,
       h('button', { class: 'wag-btn', text: 'Next', onclick: function () {
         var n = input.value.trim(); if (!n) return S.toast('Type a name first');
-        S.me = mkPlayer({ id: 'guest' + Math.random().toString(36).slice(2, 6), name: n, avatar: avatar }); S.modes(g);
+        S.me = mkPlayer({ id: 'guest' + Math.random().toString(36).slice(2, 6), name: n, avatar: avatar }); after ? after() : S.modes(g);
       } }),
-      h('button', { class: 'wag-btn alt', text: 'Back', onclick: function () { S.who(g); } })]);
+      h('button', { class: 'wag-btn alt', text: 'Back', onclick: function () { S.who(g, after); } })]);
+  };
+
+  WAGames.relaxed = function (on) {
+    try {
+      if (on === undefined) return localStorage.getItem('wag_relaxed') !== '0';
+      localStorage.setItem('wag_relaxed', on ? '1' : '0');
+    } catch (x) { }
+    return on === undefined ? true : !!on;
   };
 
   Shell.prototype.modes = function (g) {
-    var S = this, online = !!WAGames.cfg.db; S.title.textContent = g.name;
+    var S = this, online = !!WAGames.cfg.db; S.title.textContent = g.name; S.g = g;
     var defs = [
       ['solo', '🙋', 'Play solo', 'Just you, at your own pace'],
       ['coop', '🤝', 'Teamwork', 'Everyone answers before the blocks land'],
@@ -707,6 +803,12 @@
     var cards = defs.filter(function (m) { return g.modes.indexOf(m[0]) >= 0 && (m[0] === 'solo' || online); })
       .map(function (m) { return card(m[1], m[2], m[3], '', function () { m[0] === 'solo' ? S.startSolo(g) : S.together(g, m[0]); }, true); });
     var nodes = [h('div', { class: 'wag-em big', text: g.emoji || '🎲' }), h('h2', { class: 'wag-h', text: g.name })].concat(cards);
+    if (g.modes.indexOf('solo') >= 0) {
+      var rb = h('button', { class: 'wag-btn alt', text: '' });
+      var paintRb = function () { rb.textContent = WAGames.relaxed() ? '⏳ Relaxed timer: ON (extra time while you work)' : '⏳ Relaxed timer: OFF'; };
+      rb.onclick = function () { WAGames.relaxed(!WAGames.relaxed()); paintRb(); };
+      paintRb(); nodes.push(rb);
+    }
     if (!online) nodes.push(h('div', { class: 'wag-sub', text: 'Playing together turns on once the app is connected to the internet database.' }));
     nodes.push(h('button', { class: 'wag-btn alt', text: 'Back', onclick: function () { S.picker(); } }));
     S.set(nodes);
@@ -723,6 +825,9 @@
     var err = h('div', { class: 'wag-err' });
     var list = h('div', { class: 'wag-list' });
     var input = h('input', { class: 'wag-input code', maxlength: '4', placeholder: 'ABCD', autocapitalize: 'characters' });
+    var pubBtn = h('button', { class: 'wag-btn alt', text: '' });
+    var paintPub = function () { pubBtn.textContent = S.pub === false ? '🔒 Only my family can see my room' : '🌍 Other families can see my room'; };
+    pubBtn.onclick = function () { S.pub = S.pub === false; paintPub(); }; paintPub();
     if (S.unwatch) S.unwatch();
     S.unwatch = FirebaseTransport.watchFamily(db, fam, function (rooms) {
       list.innerHTML = '';
@@ -739,6 +844,7 @@
         S.match = new Match(S, g, mode, S.me, new FirebaseTransport(db, fam), true);
         S.match.create();
       } }),
+      pubBtn,
       h('div', { class: 'wag-sub', text: 'or join a game' }), list,
       h('div', { class: 'wag-row' }, [input, h('button', { class: 'wag-btn alt', text: 'Join', onclick: function () { S.joinRoom(input.value, err); } })]),
       err,
@@ -785,7 +891,7 @@
     '.wag-cn{font-weight:900;font-size:1.15rem}.wag-cs{font-size:.9rem;opacity:.75}',
     '.wag-tag{display:inline-block;margin-top:4px;padding:2px 10px;border-radius:999px;background:#3ddc97;border:2px solid #1b2a49;font-size:.78rem;font-weight:800}',
     '.wag-btn{font:inherit;font-weight:900;font-size:1.25rem;padding:14px 18px;border-radius:16px;border:3px solid #1b2a49;background:#ffd23f;color:#1b2a49;box-shadow:0 5px 0 #1b2a49;cursor:pointer;touch-action:manipulation}',
-    '.wag-btn:active{transform:translateY(4px);box-shadow:0 1px 0 #1b2a49}.wag-btn.alt{background:#fff}',
+    '.wag-btn:active{transform:translateY(4px);box-shadow:0 1px 0 #1b2a49}.wag-btn.alt{background:#fff}.wag-btn.gold{background:#ffd23f}',
     '.wag-chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}',
     '.wag-chip{background:#fff;border:3px solid #1b2a49;border-radius:999px;padding:3px 12px;font-weight:800}',
     '.wag-chip.me{background:#ffd23f}.wag-chip.team{background:#3ddc97}',
