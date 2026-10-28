@@ -135,6 +135,8 @@ h3{font-size:clamp(1.05rem,3.5vw,1.3rem);font-weight:700}
 <div id="root"></div>
 <script src="wa-books.js"></script>
 <script src="wa-speech.js"></script>
+<script src="wa-stories.js"></script>
+<script src="wa-readers.js"></script>
 <script src="wa-games.js"></script>
 <script src="wa-game-kit.js"></script>
 <script src="wa-game-alphabet.js"></script>
@@ -623,6 +625,7 @@ function FeedbackScreen({onBack}){
 // ===== MAIN APP =====
 // ===== GAMES (wa-games.js + wa-game-*.js) =====
 // Opens the Words Adventure games menu. With a learner it skips "Who's playing?"; without one the menu asks.
+function openReaders(p){const R=window.WAReaders;if(!R)return;R.open(p?{id:String(p.id),name:p.name,avatar:p.avatar}:null)}
 function openGames(p){const G=window.WAGames;if(!G)return;
   G.configure({getCurrentPlayer:p?()=>({id:String(p.id),name:p.name,avatar:p.avatar}):null,onClose:()=>G.configure({getCurrentPlayer:null})});G.open()}
 if(window.WAGames){
@@ -863,6 +866,7 @@ function App(){
         <button class="btn bp bw" style=${{fontSize:"1.05rem",padding:"16px"}} onClick=${()=>setScr("tsel-f")}>\uD83D\uDCDA ${prof.terms?.flashcards||"Flash Cards"}</button>
         <button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#7C5CFC",color:"#fff"}} onClick=${()=>setScr("tsel-a")}>\uD83C\uDF1F ${actLbl} Mode</button>
         <button class="btn br bw" style=${{fontSize:"1.05rem",padding:"16px"}} onClick=${()=>openGames(prof)}>\uD83C\uDFAE Play Games</button>
+        <button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#E0559B",color:"#fff"}} onClick=${()=>openReaders(prof)}>\uD83D\uDCD6 Read</button>
         ${showR&&html`<button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#E8651A",color:"#fff"}} onClick=${()=>setScr("reading")}>\uD83D\uDCD6 Reading Companion</button>`}
         ${showL&&html`<button class="btn bw" style=${{fontSize:"1.05rem",padding:"16px",background:"#2A9D8F",color:"#fff"}} onClick=${()=>setScr("booklist")}>\uD83D\uDCDA ${band==="early"?"Story Time Books":"My Reading List"}</button>`}
         <button class="btn bs bw" onClick=${()=>setScr("progress")}>\uD83D\uDCCA My Progress</button></div>${Ntf}</div>`}
