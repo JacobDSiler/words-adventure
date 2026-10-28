@@ -69,7 +69,7 @@
     {
       id: 'willow', n: 4, title: 'Willow and the Big Fog', emoji: '🐦', tiles: ['🐦', '🌫️', '🎵'], level: 3, length: 'About 400 words',
       sky: ['#e1f0f7', '#b6d8e8'], blurb: 'The smallest bird in the wood is lost in the fog, with only her song to save her.',
-      words: ['wren', 'fog', 'shivered', 'silvery', 'echo', 'direction'],
+      words: ['wren', 'fog', 'silvery', 'whispered', 'chirped'],
       fact: 'The wren is one of the smallest birds in Ireland and Britain, but its song is one of the loudest for its size. It can sing so loudly that you can hear it far away.',
       pages: [
         { e: ['🐦', '🎵'], t: 'Willow the wren was the smallest bird in Hollybrook Wood, but she had the loudest song. When she sang, it rang through the trees like a little silver bell.' },
@@ -91,7 +91,7 @@
     {
       id: 'fern', n: 5, title: 'Fern and the Broken Bridge', emoji: '🦊', tiles: ['🦊', '🌊', '🌉'], level: 4, length: 'About 500 words',
       sky: ['#dff3e3', '#b4e0bf'], blurb: 'The brook is rushing, the bridge is gone and a shy fox is on the wrong side.',
-      words: ['fox', 'brook', 'rushing', 'current', 'sturdy', 'brave', 'narrow'],
+      words: ['fox', 'brook', 'rushing', 'current', 'sturdy', 'narrow', 'bravely'],
       fact: 'Foxes have amazing hearing. A fox can hear a tiny mouse squeaking from far away. The bushy tail of a fox even has a special name: it is called a brush.',
       pages: [
         { e: ['🌊', '🐦'], t: 'The next morning, Pip, Rusty, Willow and Bramble went down to the brook. They wanted to find the russet-red shape that Willow had seen in the fog.' },
@@ -113,7 +113,7 @@
     {
       id: 'supper', n: 6, title: 'The Story Stump Supper', emoji: '🌙', tiles: ['🌙', '🕯️', '🍯'], level: 5, length: 'About 650 words, four chapters',
       sky: ['#d9d5f2', '#8f86c9'], blurb: 'Everyone in the wood meets at the old stump for a supper and the best stories of all.',
-      words: ['supper', 'lantern', 'glowing', 'whispered', 'adventure', 'twinkled', 'favourite'],
+      words: ['supper', 'lantern', 'glowing', 'whispered', 'belonged', 'twinkled', 'favourite'],
       fact: 'People have told stories around a fire or a lantern for thousands of years. Stories helped families remember who they were, and helped children fall asleep.',
       pages: [
         { ch: 'Chapter 1: Getting ready', e: ['🐿️', '🦔', '🌰'], t: 'All day long, Hollybrook Wood was busy.\nRusty dashed up and down the trees, gathering the biggest, shiniest {{acorns|pickles|jellybeans|socks}} he could find. Pip swept the leaves off the old stump with her prickly back until the top was as smooth as a table.' },

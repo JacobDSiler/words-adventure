@@ -52,13 +52,32 @@
     '👃': ['Sniff, sniff, snort! I smell something good.']
   };
   var qIdx = {};
-  function nextQuip(e) { var a = QUIPS[e] || ['Hello from Hollybrook Wood!']; qIdx[e] = ((qIdx[e] == null ? Math.floor(Math.random() * a.length) : qIdx[e] + 1)) % a.length; return a[qIdx[e]]; }
+  function nextQuip(e, story) { var a = (story && story.q && story.q[e]) || QUIPS[e] || (story && story.q && story.q.any) || ['Hello from Hollybrook Wood!']; qIdx[e] = ((qIdx[e] == null ? Math.floor(Math.random() * a.length) : qIdx[e] + 1)) % a.length; return a[qIdx[e]]; }
+
+  /* ---------- shelves (reading levels) ---------- */
+  var SHELVES = [
+    { id: 'K', label: 'Little readers', sub: 'Nursery to Kindergarten', emoji: '🌱' },
+    { id: '12', label: 'First readers', sub: '1st and 2nd class (Grades 1 to 2)', emoji: '🦔' },
+    { id: '34', label: 'Action and giggles', sub: '3rd and 4th class (Grades 3 to 4)', emoji: '⚡' },
+    { id: '56', label: 'Mysteries and schemes', sub: '5th and 6th class (Grades 5 to 6)', emoji: '🕵️' },
+    { id: '78', label: 'Plots and plans', sub: 'Grades 7 to 8', emoji: '🧭' },
+    { id: '912', label: 'Thought-stirrers', sub: 'Grades 9 to 12', emoji: '🌧️' },
+    { id: 'beyond', label: 'Beyond school', sub: 'Stories for grown-ups, or anyone', emoji: '☕' }
+  ];
+  function shelfOf(s) { return s.shelf || '12'; }
+  function gradeNum(id) { id = String(id); return id === 'PS' ? -2 : id === 'PK' ? -1 : id === 'K' ? 0 : id === 'AD' ? 13 : (parseInt(id, 10) || 0); }
+  function myShelf() {
+    if (!st.prof || st.prof.gradeId == null) return null;
+    var g = gradeNum(st.prof.gradeId);
+    return g <= 0 ? 'K' : g <= 2 ? '12' : g <= 4 ? '34' : g <= 6 ? '56' : g <= 8 ? '78' : g <= 12 ? '912' : 'beyond';
+  }
+  function inShelf(id) { return ST.all.filter(function (s) { return shelfOf(s) === id; }); }
 
   /* ---------- progress ---------- */
   function pid() { return st.prof ? String(st.prof.id) : 'guest'; }
   function getProg() { var all = lsGet(LSK, {}); return all[pid()] || {}; }
   function setProg(id, v) { var all = lsGet(LSK, {}); var p = all[pid()] || {}; p[id] = v; all[pid()] = p; lsSet(LSK, all); }
-  function nextUp() { var p = getProg(); for (var i = 0; i < ST.all.length; i++) if (!(p[ST.all[i].id] && p[ST.all[i].id].done)) return ST.all[i].id; return null; }
+  function nextUp(shelf) { var p = getProg(), l = inShelf(shelf); for (var i = 0; i < l.length; i++) if (!(p[l[i].id] && p[l[i].id].done)) return l[i].id; return null; }
 
   /* ---------- styles ---------- */
   var CSS = '' +
@@ -71,6 +90,7 @@
     '.war-chips{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 14px}' +
     '.war-chip{background:#fff;border:2px solid rgba(26,46,74,.12);border-radius:16px;padding:6px 12px;font:800 .92rem Nunito,sans-serif;cursor:pointer;display:flex;align-items:center;gap:6px}' +
     '.war-chip:active{transform:scale(.94)}.war-chip .e{font-size:1.6rem}' +
+    '.war-shelf-h{font-family:"Baloo 2",cursive;font-weight:800;font-size:1.3rem;margin:8px 0 2px}.war-shelf{background:rgba(255,255,255,.55);border-radius:18px;padding:8px 12px;margin:0 0 10px}.war-shelf summary{font:800 1.05rem Nunito,sans-serif;cursor:pointer;padding:6px 0}.war-shelf summary small{font-weight:700;opacity:.7;font-size:.8rem;display:block}.war-shelf[open] summary{margin-bottom:8px}' +
     '.war-card{display:flex;gap:14px;align-items:center;width:100%;text-align:left;background:#fff;border:0;border-radius:22px;padding:14px;margin:0 0 12px;box-shadow:0 4px 14px rgba(26,46,74,.12);cursor:pointer;font-family:inherit;color:inherit;position:relative}' +
     '.war-card:active{transform:scale(.985)}' +
     '.war-card .big{font-size:2.6rem;line-height:1;min-width:64px;height:64px;border-radius:18px;display:flex;align-items:center;justify-content:center}' +
@@ -152,25 +172,32 @@
   }
 
   /* ---------- library ---------- */
+  function cardHtml(s, prog, up) {
+    var p = prog[s.id] || {}, badge = p.done ? '<span class="war-badge done">' + '⭐'.repeat(Math.max(1, p.stars || 1)) + ' Read!</span>' : (s.id === up ? '<span class="war-badge">Read me next!</span>' : '');
+    return '<button class="war-card" data-s="' + s.id + '">' + badge + '<span class="big" style="background:' + s.sky[1] + '">' + s.emoji + '</span><span><b>' + esc(s.title) + '</b><small>' + esc(s.blurb) + '</small><small>' + (s.ages ? esc(s.ages) + ' · ' : '') + esc(s.length) + '</small></span></button>';
+  }
   function library() {
     st.tok++; stopSay();
-    var prog = getProg(), up = nextUp(), done = 0;
+    var prog = getProg(), done = 0, mine = myShelf();
     ST.all.forEach(function (s) { if (prog[s.id] && prog[s.id].done) done++; });
     var chips = ['🦔', '🐿️', '🦡', '🐦', '🦊'].map(function (e, i) { return '<button class="war-chip" data-q="' + e + '"><span class="e">' + e + '</span>' + ['Pip', 'Rusty', 'Bramble', 'Willow', 'Fern'][i] + '</button>'; }).join('');
-    var cards = ST.all.map(function (s) {
-      var p = prog[s.id] || {}, badge = p.done ? '<span class="war-badge done">' + '⭐'.repeat(Math.max(1, p.stars || 1)) + ' Read!</span>' : (s.id === up ? '<span class="war-badge">Read me next!</span>' : '');
-      return '<button class="war-card" data-s="' + s.id + '">' + badge + '<span class="big" style="background:' + s.sky[1] + '">' + s.emoji + '</span><span><b>' + s.n + '. ' + esc(s.title) + '</b><small>' + esc(s.blurb) + '</small><small>' + '🌟'.repeat(s.level) + ' ' + esc(s.length) + '</small></span></button>';
-    }).join('');
+    var chipBox = '<div class="war-sub" style="margin-bottom:2px">Tap an animal to say hello:</div><div class="war-chips">' + chips + '</div><div class="war-bub hint" id="war-lb">Tap me! Tap words! Tap wiggly words!</div>';
+    function shelfBody(sh) { return (sh.id === '12' ? chipBox : '') + inShelf(sh.id).map(function (s) { return cardHtml(s, prog, nextUp(sh.id)); }).join(''); }
+    var top = '', rest = '';
+    SHELVES.forEach(function (sh) {
+      if (!inShelf(sh.id).length) return;
+      if (sh.id === mine) top = '<div class="war-shelf-h">⭐ Just right for you: ' + sh.emoji + ' ' + esc(sh.label) + '</div><div class="war-sub">' + esc(sh.sub) + '</div>' + shelfBody(sh);
+      else rest += '<details class="war-shelf"' + (!mine && sh.id === 'K' ? ' open' : '') + '><summary>' + sh.emoji + ' ' + esc(sh.label) + ' <small>' + esc(sh.sub) + '</small></summary>' + shelfBody(sh) + '</details>';
+    });
     paint('linear-gradient(180deg,#fff7e6,#ffe7c2)',
       '<div class="war-top"><button class="war-back" data-act="close">← Back</button></div>' +
-      '<div class="war-h">📖 Read: Hollybrook Wood</div>' +
-      '<div class="war-sub">Six stories about five animal friends. Each one is a little longer than the last. ' + done + ' of 6 read.</div>' +
-      '<div class="war-sub" style="margin-bottom:2px">Tap an animal to say hello:</div><div class="war-chips">' + chips + '</div><div class="war-bub hint" id="war-lb">Tap me! Tap words! Tap wiggly words!</div>' +
-      cards +
-      '<details class="war-grown"><summary>For grown-ups</summary>Let the child read the story aloud to you, to a sister or to a cuddly toy. Read the yellow "words to spot" together first. If she gets stuck, give her the word and keep going so the story keeps its flow. Tap any word to hear it. The "Read to me" button reads a page aloud, and the turtle slows it down. The animals and wiggly words are there to make reading feel like play. The "what do you think?" questions have no wrong answers, and "Talk about it" at the end is a chat, not a test. A favourite read twice builds the most confidence.' + (canSpeak() ? '' : '<br><br><b>Note:</b> this device has no read-aloud voice, so the sound buttons will stay quiet.') + '</details>');
+      '<div class="war-h">📖 Read</div>' +
+      '<div class="war-sub">Stories to play with: tap words, tap pictures, tap wiggly words. ' + done + ' of ' + ST.all.length + ' read.</div>' +
+      top + (top && rest ? '<div class="war-shelf-h" style="margin-top:18px">More shelves</div>' : '') + rest +
+      '<details class="war-grown"><summary>For grown-ups</summary>Let the child read the story aloud to you, to a sister or to a cuddly toy. Read the yellow "words to spot" together first. If she gets stuck, give her the word and keep going so the story keeps its flow. Tap any word to hear it. The "Read to me" button reads a page aloud, and the turtle slows it down. The pictures and wiggly words are there to make reading feel like play. The "what do you think?" questions have mostly no wrong answers, and "Talk about it" at the end is a chat, not a test. A favourite read twice builds the most confidence. The shelves go up from first readers to stories for grown-ups, so a child can always try the next shelf when she is ready.' + (canSpeak() ? '' : '<br><br><b>Note:</b> this device has no read-aloud voice, so the sound buttons will stay quiet.') + '</details>');
     on('[data-act=close]', 'click', function () { close(); });
     on('[data-s]', 'click', function () { startStory(this.getAttribute('data-s')); });
-    on('[data-q]', 'click', function () { var e = this.getAttribute('data-q'), q = nextQuip(e), b = st.ov.querySelector('#war-lb'); b.classList.remove('hint'); b.textContent = e + ' ' + q; say(q); });
+    on('[data-q]', 'click', function () { var e = this.getAttribute('data-q'), q = nextQuip(e, null), b = st.ov.querySelector('#war-lb'); b.classList.remove('hint'); b.textContent = e + ' ' + q; say(q); });
   }
 
   /* ---------- reader ---------- */
@@ -233,7 +260,7 @@
     on('[data-act=slow]', 'click', function () { st.slow = !st.slow; this.textContent = st.slow ? '🐢' : '🐇'; this.setAttribute('aria-pressed', st.slow); });
     on('[data-act=read]', 'click', toggleRead);
     on('.war-tile', 'click', function () {
-      var e = this.getAttribute('data-e'), q = nextQuip(e), b = st.ov.querySelector('#war-bub');
+      var e = this.getAttribute('data-e'), q = nextQuip(e, s), b = st.ov.querySelector('#war-bub');
       this.classList.remove('hop'); void this.offsetWidth; this.classList.add('hop');
       b.classList.remove('hint'); b.textContent = q; say(q);
     });
@@ -275,7 +302,7 @@
   function hunt(first) {
     var s = st.story;
     if (first || !st.hunt) {
-      var pool = []; ST.all.forEach(function (o) { if (o.id !== s.id) o.words.forEach(function (w) { pool.push(w); }); });
+      var pool = []; ST.all.forEach(function (o) { if (o.id !== s.id && shelfOf(o) === shelfOf(s)) o.words.forEach(function (w) { pool.push(w); }); }); if (pool.length < 6) ST.all.forEach(function (o) { if (o.id !== s.id) o.words.forEach(function (w) { if (pool.indexOf(w) < 0) pool.push(w); }); });
       var targets = shuffle(s.words).slice(0, Math.min(5, s.words.length));
       st.hunt = { i: 0, ok: 0, rounds: targets.map(function (w) { var d = shuffle(pool).sort(function (a, b) { return Math.abs(a.length - w.length) - Math.abs(b.length - w.length) + (Math.random() - .5) * 3; }).slice(0, 2); return { w: w, opts: shuffle([w].concat(d)), tries: 0 }; }) };
     }
@@ -319,7 +346,7 @@
     if (Object.keys(st.talked).length >= s.talk.length) st.stars.talk = 1;
     var stars = st.stars.read + st.stars.hunt + st.stars.talk, prev = getProg()[s.id] || {};
     setProg(s.id, { done: 1, stars: Math.max(stars, prev.stars || 0), t: Date.now() });
-    var nx = ST.all[ST.all.indexOf(s) + 1];
+    var sh = inShelf(shelfOf(s)), nx = sh[sh.indexOf(s) + 1];
     confetti();
     paint('linear-gradient(180deg,' + s.sky[0] + ',' + s.sky[1] + ')',
       '<div class="war-top"><button class="war-back" data-act="lib">← Stories</button></div>' +
