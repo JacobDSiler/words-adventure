@@ -82,7 +82,7 @@
   /* ---------- styles ---------- */
   var CSS = '' +
     '.war-ov{position:fixed;inset:0;z-index:9500;overflow-y:auto;-webkit-overflow-scrolling:touch;font-family:Nunito,system-ui,sans-serif;color:#1A2E4A}' +
-    '.war-wrap{max-width:720px;margin:0 auto;padding:12px 16px 110px;min-height:100%}' +
+    '.war-wrap{max-width:720px;margin:0 auto;padding:12px 16px 170px;min-height:100%}' +
     '.war-top{display:flex;align-items:center;gap:10px;margin-bottom:8px}' +
     '.war-back{background:rgba(255,255,255,.75);border:0;border-radius:14px;padding:8px 14px;font:800 1rem Nunito,sans-serif;color:#1A2E4A;cursor:pointer}' +
     '.war-h{font-family:"Baloo 2",cursive;font-weight:800;font-size:clamp(1.3rem,5vw,1.8rem);line-height:1.15;margin:4px 0}' +
@@ -109,7 +109,11 @@
     '.war-chap{font-family:"Baloo 2",cursive;font-weight:800;font-size:1.25rem;text-align:center;margin:6px 0}' +
     '.war-text{background:#fff;border-radius:24px;padding:18px 18px 14px;box-shadow:0 5px 16px rgba(26,46,74,.14);font-size:clamp(1.3rem,4.6vw,1.65rem);line-height:1.75;font-weight:600}' +
     '.war-text p{margin:0 0 .65em;padding:2px 6px;border-radius:12px;transition:background .2s}' +
-    '.war-text p.hl{background:#fff3b8}' +
+    '.war-text .cs{background:#fff3b8}' +
+    '.war-text .cw{background:#ffb703;box-shadow:0 0 0 3px #ffb703;color:#1A2E4A;border-radius:6px}' +
+    '.war-tr{flex:1 1 100%;display:flex;gap:8px;justify-content:center;align-items:center}' +
+    '.war-tr .war-btn{padding:10px 14px}.war-tr .main{flex:1 1 auto;max-width:240px}' +
+    '.war-nav .pn{flex:1 1 40%;max-width:200px}' +
     '.war-text .w{cursor:pointer;border-radius:8px;padding:0 1px}' +
     '.war-text .w:active{background:#cfe3ff}' +
     '.war-text .spot{background:#ffe9a0;box-shadow:0 2px 0 #f2c94c}' +
@@ -125,7 +129,7 @@
     '.war-opt .e{display:block;font-size:2rem}' +
     '.war-opt.on{border-color:#2D6BE4;background:#e3edff}' +
     '.war-reply{margin-top:10px;font-weight:800;background:#fff;border-radius:14px;padding:10px 12px}' +
-    '.war-nav{position:fixed;left:0;right:0;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:rgba(255,255,255,.92);box-shadow:0 -4px 16px rgba(0,0,0,.1);display:flex;gap:8px;justify-content:center;align-items:center;z-index:2}' +
+    '.war-nav{position:fixed;left:0;right:0;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:rgba(255,255,255,.92);box-shadow:0 -4px 16px rgba(0,0,0,.1);display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:center;z-index:2}' +
     '.war-btn{border:0;border-radius:16px;padding:12px 16px;font:800 1.05rem Nunito,sans-serif;cursor:pointer;background:#e8edf7;color:#1A2E4A;min-height:48px}' +
     '.war-btn.go{background:#2D6BE4;color:#fff}.war-btn.fun{background:#FF6B6B;color:#fff}.war-btn.ok{background:#06D6A0;color:#fff}' +
     '.war-btn:disabled{opacity:.4}.war-btn:active{transform:scale(.95)}' +
@@ -145,7 +149,7 @@
     '@keyframes warfall{to{transform:translateY(110vh) rotate(360deg);opacity:.9}}';
 
   /* ---------- state + shell ---------- */
-  var st = { prof: null, ov: null, story: null, pi: 0, tok: 0, slow: false, asked: {}, sw: {}, hunt: null, talked: {}, reading: false, stars: { read: 0, hunt: 0, talk: 0 } };
+  var st = { prof: null, ov: null, story: null, pi: 0, tok: 0, slow: false, mode: 0, units: [], sents: [], si: 0, wi: 0, playing: false, asked: {}, sw: {}, hunt: null, talked: {}, reading: false, stars: { read: 0, hunt: 0, talk: 0 } };
 
   function ensureCss() { if (doc.getElementById('war-css')) return; var s = doc.createElement('style'); s.id = 'war-css'; s.textContent = CSS; doc.head.appendChild(s); }
   function open(prof) {
@@ -231,7 +235,7 @@
   }
   function page() {
     var s = st.story, p = s.pages[st.pi], last = st.pi === s.pages.length - 1;
-    st.tok++; stopSay(); st.reading = false;
+    st.tok++; stopSay(); st.reading = false; st.playing = false; st.si = 0; st.wi = 0;
     var spot = {}; s.words.forEach(function (w) { spot[w.toLowerCase()] = 1; });
     var pageSw = st.sw[st.pi] || (st.sw[st.pi] = {});
     var r = renderTokens(p.t, spot, pageSw);
@@ -249,16 +253,21 @@
       (st.pi === 0 ? '<div class="war-h" style="text-align:center">' + s.emoji + ' ' + esc(s.title) + '</div><div class="war-note">Yellow words are words to spot first.</div>' : '') +
       (p.ch ? '<div class="war-chap">' + esc(p.ch) + '</div>' : '') +
       '<div class="war-tiles">' + tiles + '</div><div class="war-bub hint" id="war-bub">' + (r.silly ? 'Tap the wiggly purple word to make it silly!' : 'Tap me! Tap any word to hear it.') + '</div>' +
-      '<div class="war-text" id="war-text">' + r.html + '</div>' + ask + mine +
+      '<div class="war-text" id="war-text">' + r.html + '</div>' + ask + mine + voiceBox() +
       '<div class="war-nav">' +
-      '<button class="war-btn" data-act="prev"' + (st.pi === 0 ? ' disabled' : '') + ' aria-label="Back one page">◀</button>' +
-      (canSpeak() ? '<button class="war-btn fun" data-act="read" id="war-read">🔊 Read to me</button><button class="war-btn" data-act="slow" aria-pressed="' + st.slow + '" title="Slower voice">' + (st.slow ? '🐢' : '🐇') + '</button>' : '') +
-      '<button class="war-btn ' + (last ? 'ok' : 'go') + '" data-act="next">' + (last ? 'The end ⭐' : 'Next ▶') + '</button></div>');
+      (canSpeak() ? '<div class="war-tr"><button class="war-btn" data-act="rew" aria-label="Back one sentence" title="Back one sentence">⏮</button><button class="war-btn fun main" data-act="read" id="war-read">🔊 Read to me</button><button class="war-btn" data-act="fwd" aria-label="Next sentence" title="Next sentence">⏭</button><button class="war-btn" data-act="slow" id="war-mode" title="Reading speed"></button></div>' : '') +
+      '<button class="war-btn pn" data-act="prev"' + (st.pi === 0 ? ' disabled' : '') + ' aria-label="Back one page">◀ Back</button>' +
+      '<button class="war-btn pn ' + (last ? 'ok' : 'go') + '" data-act="next">' + (last ? 'The end ⭐' : 'Next ▶') + '</button></div>');
     on('[data-act=lib]', 'click', library);
     on('[data-act=prev]', 'click', function () { if (st.pi > 0) { st.pi--; page(); } });
     on('[data-act=next]', 'click', function () { if (last) endStory(); else { st.pi++; page(); } });
-    on('[data-act=slow]', 'click', function () { st.slow = !st.slow; this.textContent = st.slow ? '🐢' : '🐇'; this.setAttribute('aria-pressed', st.slow); });
+    on('[data-act=slow]', 'click', function () { st.mode = (st.mode + 1) % 3; st.slow = st.mode > 0; modeBtn(); var b = st.ov.querySelector('#war-bub'); if (b) { b.classList.remove('hint'); b.textContent = ['Normal reading speed.', 'Slow and clear.', 'Word by word: one word at a time, with a little gap.'][st.mode]; } if (st.playing) playFrom(st.si); });
     on('[data-act=read]', 'click', toggleRead);
+    on('[data-act=rew]', 'click', function () { if (!st.sents.length) return; var go = st.si; if (!(st.wi > 1) && go > 0) go--; playFrom(go); });
+    on('[data-act=fwd]', 'click', function () { if (!st.sents.length) return; if (st.si + 1 >= st.sents.length) { finishRead(); return; } playFrom(st.si + 1); });
+    modeBtn(); prepRead();
+    var vsel = st.ov.querySelector('#war-vsel');
+    if (vsel) vsel.addEventListener('change', function () { SP.setVoice(vsel.value); say('Hello! This is how I sound. Can you read with me?', { rate: 0.85 }); });
     on('.war-tile', 'click', function () {
       var e = this.getAttribute('data-e'), q = nextQuip(e, s), b = st.ov.querySelector('#war-bub');
       this.classList.remove('hop'); void this.offsetWidth; this.classList.add('hop');
@@ -269,7 +278,7 @@
       var sw = ev.target.closest && ev.target.closest('.sw');
       if (sw) { var alts = sw.getAttribute('data-alts').split('|'), k = +sw.getAttribute('data-k'), c = ((pageSw[k] || 0) + 1) % alts.length; pageSw[k] = c; sw.textContent = alts[c]; sw.classList.remove('pop'); void sw.offsetWidth; sw.classList.add('pop'); say(alts[c]); if (c) { var b = st.ov.querySelector('#war-bub'); b.classList.remove('hint'); b.textContent = 'Ha ha! "' + alts[c] + '"! Read the sentence again. Is it silly now?'; } return; }
       var w = ev.target.closest && ev.target.closest('.w');
-      if (w) { var t = w.getAttribute('data-w'); if (t) say(t, { rate: st.slow ? 0.6 : 0.78 }); }
+      if (w) { var t = w.getAttribute('data-w'); if (t) tapWord(w, t); }
     });
     on('.war-opt[data-o]', 'click', function () {
       var i = +this.getAttribute('data-o'); st.asked[st.pi] = i;
@@ -282,20 +291,71 @@
       on('[data-st]', 'click', function () { var starters = ['Once upon a time, a new animal came to Hollybrook Wood. It was a ', 'One night at the old stump, something very silly happened. ', 'My story is about ']; ta.value = (ta.value ? ta.value + '\n' : '') + starters[+this.getAttribute('data-st')]; ta.focus(); ta.dispatchEvent(new Event('input')); });
     }
   }
-  function toggleRead() {
-    var btn = st.ov.querySelector('#war-read');
-    if (st.reading) { st.tok++; stopSay(); st.reading = false; clearHl(); if (btn) btn.textContent = '🔊 Read to me'; return; }
-    var my = ++st.tok, paras = st.ov.querySelectorAll('#war-text p'), i = 0;
-    st.reading = true; if (btn) btn.textContent = '⏹ Stop';
-    (function nextPara() {
-      if (my !== st.tok) return;
-      clearHl();
-      if (i >= paras.length) { st.reading = false; if (btn) btn.textContent = '🔊 Read to me'; return; }
-      var el = paras[i++]; el.classList.add('hl');
-      SP.sayAll(chunks(el.textContent), { rate: st.slow ? 0.6 : 0.8, gap: 120 }).then(function () { if (my === st.tok) setTimeout(nextPara, 180); });
-    })();
+  /* ---------- read aloud: sentence by sentence, with the spoken word lit up ---------- */
+  var MODES = [{ i: '🐇', rate: 0.85, t: 'Normal speed' }, { i: '🐢', rate: 0.65, t: 'Slow' }, { i: '🔤', rate: 0.7, t: 'Word by word' }];
+  function modeBtn() { var b = st.ov && st.ov.querySelector('#war-mode'); if (b) { b.textContent = MODES[st.mode].i; b.title = 'Reading speed: ' + MODES[st.mode].t; b.setAttribute('aria-label', 'Reading speed: ' + MODES[st.mode].t); } }
+  function readBtn(txt) { var b = st.ov && st.ov.querySelector('#war-read'); if (b) b.textContent = txt; }
+  function prepRead() {
+    st.units = [].slice.call(st.ov.querySelectorAll('#war-text .w, #war-text .sw')); st.sents = [];
+    var a = 0;
+    st.units.forEach(function (u, i) {
+      var tx = u.textContent.trim(), nx = st.units[i + 1];
+      if (/[.!?…]["”')]*$/.test(tx) || !nx || nx.closest('p') !== u.closest('p')) { st.sents.push({ a: a, b: i }); a = i + 1; }
+    });
+    st.units.forEach(function (u, i) { for (var k = 0; k < st.sents.length; k++) if (i >= st.sents[k].a && i <= st.sents[k].b) { u.setAttribute('data-s', k); break; } });
   }
-  function clearHl() { if (!st.ov) return; var h = st.ov.querySelectorAll('#war-text p.hl'); for (var i = 0; i < h.length; i++) h[i].classList.remove('hl'); }
+  function clearHl() { if (!st.ov) return; var h = st.ov.querySelectorAll('#war-text .cs, #war-text .cw'); for (var i = 0; i < h.length; i++) h[i].classList.remove('cs', 'cw'); }
+  function litSentence(si) { clearHl(); var s = st.sents[si]; if (!s) return; for (var i = s.a; i <= s.b; i++) st.units[i].classList.add('cs'); }
+  function litWord(u) {
+    var o = st.ov.querySelectorAll('#war-text .cw'); for (var i = 0; i < o.length; i++) o[i].classList.remove('cw');
+    if (!u) return; u.classList.add('cw');
+    try { var r = u.getBoundingClientRect(), H = root.innerHeight || 600; if (r.top < 70 || r.bottom > H - 190) u.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { }
+  }
+  function playFrom(si) {
+    var my = ++st.tok; stopSay(); st.si = si; st.wi = 0; st.playing = true; st.reading = true; readBtn('⏸ Pause'); runSent(my);
+  }
+  function runSent(my) {
+    if (my !== st.tok) return;
+    if (st.si >= st.sents.length) { finishRead(); return; }
+    var sn = st.sents[st.si], us = st.units.slice(sn.a, sn.b + 1), ws = us.map(function (u) { return u.textContent.trim(); }), M = MODES[st.mode];
+    litSentence(st.si); litWord(us[0]); st.wi = 0;
+    function after() { if (my !== st.tok) return; st.si++; setTimeout(function () { runSent(my); }, st.mode === 2 ? 350 : 280); }
+    if (st.mode === 2) {                      // word by word: say each word on its own, light it up first
+      var k = 0;
+      (function nx() {
+        if (my !== st.tok) return;
+        if (k >= us.length) return after();
+        st.wi = k; litWord(us[k]);
+        SP.speakWords([ws[k]], { rate: M.rate }).then(function () { k++; setTimeout(nx, 420); });
+      })();
+      return;
+    }
+    SP.speakWords(ws, { rate: M.rate, onWord: function (i) { if (my !== st.tok) return; st.wi = i; litWord(us[i]); } }).then(after);
+  }
+  function pauseRead() { st.tok++; stopSay(); st.playing = false; st.reading = false; readBtn('▶ Keep going'); }
+  function finishRead() { st.tok++; stopSay(); st.playing = false; st.reading = false; st.si = 0; st.wi = 0; clearHl(); readBtn('🔊 Read again'); }
+  function voiceBox() {
+    var vs = []; try { vs = (canSpeak() && SP.listVoices) ? SP.listVoices() : []; } catch (e) { }
+    if (vs.length < 2) return '';
+    var cur = SP.voiceName();
+    return '<details class="war-grown" id="war-voice"><summary>🎙️ Change the reading voice</summary><div style="margin-top:8px"><select id="war-vsel" style="width:100%;font:700 1rem Nunito,sans-serif;padding:8px;border-radius:10px">' +
+      vs.map(function (v) { return '<option value="' + esc(v.name) + '"' + (v.name === cur ? ' selected' : '') + '>' + (v.good ? '★ ' : '') + esc(v.name) + ' (' + esc(v.lang) + ')</option>'; }).join('') +
+      '</select><div class="war-note" style="text-align:left">★ voices sound the most natural. If the voice says words oddly, try another one. On Windows, Microsoft Edge has free “Natural” voices.</div></div></details>';
+  }
+  function toggleRead() {
+    if (st.playing) { pauseRead(); return; }
+    if (!st.sents.length) prepRead();
+    playFrom(st.si >= st.sents.length ? 0 : st.si);
+  }
+  function tapWord(el, t) {
+    var wasPlaying = st.playing, si = +el.getAttribute('data-s');
+    st.tok++; st.playing = false; st.reading = false;
+    if (si >= 0 && st.sents.length) { st.si = si; litSentence(si); readBtn('▶ Keep going'); }
+    litWord(el);
+    var my = st.tok;
+    if (SP.speakWords) SP.speakWords([t], { rate: st.slow ? 0.6 : 0.78 }).then(function () { if (my === st.tok) litWord(null); });
+    else say(t, { rate: st.slow ? 0.6 : 0.78 });
+  }
 
   /* ---------- after the story: word hunt, talk cards, finish ---------- */
   function endStory() { st.tok++; stopSay(); st.stars.read = 1; confetti(['🎉', '⭐', '📖']); hunt(true); }
