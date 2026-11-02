@@ -56,10 +56,20 @@
       if (/female|aria|jenny|sonia|libby|samantha|karen|moira|google uk english female|zira|hazel/i.test(n)) s += 2;
       return s;
     }
-    var best = null, bs = -1;
+    var best = null, bs = -1, saved = null;
+    try { saved = root.localStorage.getItem('wag_voice'); } catch (e) { }
     voices.forEach(function (v) { var s = score(v); if (s > bs) { bs = s; best = v; } });
+    if (saved) { var sv = voices.filter(function (v) { return v.name === saved; })[0]; if (sv) best = sv; }
     voice = best;
   }
+  function listVoices() {
+    if (!hasTTS) return [];
+    var vs = (syn.getVoices() || []).filter(function (v) { return /^en/i.test(v.lang || ''); });
+    function sc(v) { var n = (v.name || '') + ' ' + (v.lang || ''); return (/natural|online|neural/i.test(n) ? 10 : 0) + (/en[-_]ie/i.test(v.lang) ? 3 : /en[-_]gb/i.test(v.lang) ? 2 : /en[-_]us/i.test(v.lang) ? 1 : 0); }
+    return vs.sort(function (a, b) { return sc(b) - sc(a); }).map(function (v) { return { name: v.name, lang: v.lang, good: /natural|online|neural/i.test(v.name || '') }; });
+  }
+  function setVoice(name) { try { if (name) root.localStorage.setItem('wag_voice', name); else root.localStorage.removeItem('wag_voice'); } catch (e) { } pickVoice(); return voiceName(); }
+  function voiceName() { return voice ? voice.name : ''; }
   if (hasTTS) { pickVoice(); try { syn.addEventListener('voiceschanged', pickVoice); } catch (e) { syn.onvoiceschanged = pickVoice; } }
 
   /* ---------------- recorded clips (IndexedDB) ---------------- */
@@ -111,15 +121,69 @@
     try { if (hasTTS) syn.cancel(); } catch (e) { }
     if (curAudio) { try { curAudio.pause(); } catch (e) { } curAudio = null; }
   }
-  function ttsText(t) {
-    t = String(t);
-    if (/^[A-Za-z]$/.test(t)) return nameOf(t);           // a lone letter is read by its NAME (a lone "A" would be read as the word "a")
-    return t.replace(/\b[A-Z]{2,}\b/g, function (m) { return m.toLowerCase(); });   // CAT -> cat, so it is not spelled out
+  // Respellings used ONLY for the computer voice (the page keeps the real spelling).
+  var PRON = {
+    mr: 'Mister', mrs: 'Missus', ms: 'Miz', dr: 'Doctor', st: 'Saint',
+    aoife: 'Eefa', aoibhe: 'Eeva', cian: 'Keean', maebh: 'Maeve', fionn: 'Finn', cathal: 'Kahal', zainab: 'Zy-nab', siobhan: 'Shivawn', niamh: 'Neev', saoirse: 'Seer-sha', oisin: 'Usheen', ciara: 'Keera', eoin: 'Owen', tadhg: 'Tige', sean: 'Shawn', roisin: 'Ro-sheen',
+    hic: 'hick', hics: 'hicks', shhh: 'shh', shhhh: 'shh', hmm: 'hmm', hmmph: 'hmph', brrr: 'brr', brrrr: 'brr', psst: 'pssst', ooh: 'ooh', whoosh: 'whoosh', coo: 'coo'
+  };
+  function pronWord(w, alone) {
+    var m = /^([^A-Za-z']*)([A-Za-z']+)([^A-Za-z']*)$/.exec(w);
+    if (!m) return w;
+    var core = m[2], k = core.toLowerCase();
+    if (alone && k === 'a') core = 'uh'; else if (alone && core === 'I') core = 'eye';
+    else if (PRON[k]) core = PRON[k];
+    else if (/^[A-Z]{2,}$/.test(core)) core = core.toLowerCase();   // CAT -> cat, so it is not spelled out
+    return m[1] + core + m[3];
   }
+  function ttsText(t, raw) {
+    t = String(t);
+    if (!raw && /^[A-Za-z]$/.test(t)) return nameOf(t);   // a lone letter is read by its NAME (letter games)
+    return t.replace(/[^\s]+/g, function (w) { return pronWord(w, false); });
+  }
+  // Speak a list of words as one natural sentence and report which word is being spoken (for highlighting).
+  // Uses the voice's word-boundary events when it has them; otherwise times the highlight by estimate.
+  function speakWords(words, opts) {
+    opts = opts || {};
+    return ready.then(function () {
+      return new Promise(function (ok) {
+        if (!hasTTS || !words || !words.length) return ok();
+        stop(); var my = token, alone = words.length === 1, text = '', offs = [], i, gotB = false, last = -1, timers = [], done = false;
+        for (i = 0; i < words.length; i++) { if (i) text += ' '; offs.push(text.length); text += pronWord(String(words[i]), alone); }
+        function mark(idx) { if (idx === last || my !== token) return; last = idx; if (opts.onWord) try { opts.onWord(idx); } catch (e) { } }
+        function fin() { if (done) return; done = true; timers.forEach(clearTimeout); clearTimeout(guard); ok(); }
+        var rate = opts.rate || 0.82;
+        var u = new root.SpeechSynthesisUtterance(text);
+        if (voice) { u.voice = voice; u.lang = voice.lang; } else u.lang = 'en-GB';
+        u.rate = rate; u.pitch = 1.0;
+        u.onboundary = function (e) {
+          if (e.name && e.name !== 'word') return;
+          gotB = true; var k = 0; for (var j = 0; j < offs.length; j++) if (offs[j] <= e.charIndex) k = j;
+          mark(k);
+        };
+        u.onstart = function () {
+          mark(0);
+          timers.push(setTimeout(function () {       // no boundary events from this voice: estimate the timing
+            if (gotB || my !== token || done) return;
+            var t = 0; words.forEach(function (w, j) {
+              var core = String(w).replace(/[^A-Za-z']/g, ''), dur = (230 + 62 * core.length) / rate + (/[,;:]$/.test(w) ? 220 : /[.!?…]["”')]*$/.test(w) ? 380 : 0);
+              if (j > 0) { (function (jj, at) { timers.push(setTimeout(function () { if (!gotB) mark(jj); }, Math.max(0, at - 900))); })(j, t); }
+              t += dur;
+            });
+          }, 900));
+        };
+        u.onend = fin; u.onerror = fin;
+        var guard = setTimeout(fin, 4000 + words.length * 1500);
+        cur = u;
+        try { syn.speak(u); } catch (e) { fin(); }
+      });
+    });
+  }
+  var rawFlag = false;
   function speakTTS(text, my, rate) {
     return new Promise(function (ok) {
       if (!hasTTS || my !== token) return ok();
-      var u = new root.SpeechSynthesisUtterance(ttsText(text)), done = false;
+      var u = new root.SpeechSynthesisUtterance(ttsText(text, rawFlag)), done = false;
       if (voice) { u.voice = voice; u.lang = voice.lang; } else u.lang = 'en-GB';
       u.rate = rate || 0.82; u.pitch = 1.05;
       function fin() { if (!done) { done = true; clearTimeout(guard); ok(); } }
@@ -148,7 +212,7 @@
   }
   function sayAll(items, opts) {
     opts = opts || {};
-    stop();
+    stop(); rawFlag = !!opts.raw;
     var my = token, list = (items || []).filter(function (x) { return x != null && x !== ''; });
     return ready.then(function () {
       var p = Promise.resolve();
@@ -250,6 +314,7 @@
     on: on, setOn: setOn, isSet: isSet, say: say, sayAll: sayAll, stop: stop,
     nameOf: nameOf, soundOf: soundOf, wordOf: wordOf, emojiOf: emojiOf,
     nameItem: nameItem, soundItem: soundItem, wordItem: wordItem,
+    speakWords: speakWords, pron: pronWord, listVoices: listVoices, setVoice: setVoice, voiceName: voiceName,
     recorderPanel: recorderPanel, clips: clips, ready: ready, _putClip: putClip
   };
 })(typeof window !== 'undefined' ? window : globalThis);
