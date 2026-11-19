@@ -41,20 +41,65 @@
   /* ---------- state ---------- */
   var st = { ov: null, prof: null, pid: 'guest', data: null, story: null, view: 'write', pack: 'first', slow: false, tok: 0, reading: false, mine: [], fix: null, level: 1, drag: null, picsOn: true };
 
+  function emptyStory(x) { return !x.title && !(x.tiles && x.tiles.length); }
+  function mergeData(a, b) {
+    a = a || {}; b = b || {};
+    var del = {}, k, map = {}, out = [];
+    [b.del || {}, a.del || {}].forEach(function (d) { for (k in d) if (!(del[k] >= d[k])) del[k] = d[k]; });
+    [(b.stories || []), (a.stories || [])].forEach(function (l) { l.forEach(function (x) { if (!x || !x.id) return; if (!map[x.id] || (x.t || 0) >= (map[x.id].t || 0)) map[x.id] = x; }); });
+    for (k in map) if (!(del[k] >= (map[k].t || 0))) out.push(map[k]);
+    out.sort(function (x, y) { return (y.t || 0) - (x.t || 0); });
+    var seen = {}, mine = [];
+    (a.mine || []).concat(b.mine || []).forEach(function (w) { var l = String(w).toLowerCase(); if (!seen[l]) { seen[l] = 1; mine.push(w); } });
+    return { cur: a.cur, stories: out, del: del, mine: mine };
+  }
   function load() {
     st.pid = st.prof && st.prof.id ? String(st.prof.id) : 'guest';
-    var all = lsGet(LSK, {}); st.data = all[st.pid] || { cur: null, stories: [] };
-    st.mine = (lsGet(LSW, {})[st.pid]) || [];
-    var s = st.data.stories.filter(function (x) { return x.id === st.data.cur; })[0] || st.data.stories[0];
+    var all = lsGet(LSK, {}), d = all[st.pid] || { cur: null, stories: [] };
+    d.del = d.del || {}; d.mine = d.mine || [];
+    var oldMine = (lsGet(LSW, {})[st.pid]) || []; oldMine.forEach(function (w) { if (d.mine.map(function (x) { return x.toLowerCase(); }).indexOf(String(w).toLowerCase()) < 0) d.mine.push(w); });
+    st.data = d; st.mine = d.mine;
+    var s = d.stories.filter(function (x) { return x.id === d.cur; })[0] || d.stories[0];
     if (!s) { s = newStory(); }
-    st.story = s; st.data.cur = s.id;
+    st.story = s; d.cur = s.id;
   }
   function newStory() { var s = { id: uid(), title: '', tiles: [], t: Date.now() }; st.data.stories.unshift(s); return s; }
+  function localSave() { var all = lsGet(LSK, {}); st.data.mine = st.mine; all[st.pid] = st.data; lsSet(LSK, all); }
+  function cloudOn() { return !!(root.WACloud && root.WACloud.ok && root.WACloud.ok() && st.pid !== 'guest'); }
+  function cloudMsg(t, c) { st.cm = [t, c]; var e = st.ov && st.ov.querySelector('#ww-cloud'); if (e) { e.textContent = t; e.style.color = c || ''; } }
+  var pushT = null;
   function save() {
-    if (!st.story) return; st.story.t = Date.now(); st.data.cur = st.story.id;
-    var all = lsGet(LSK, {}); all[st.pid] = st.data; lsSet(LSK, all);
+    if (!st.story) return; st.story.t = Date.now(); st.data.cur = st.story.id; localSave();
+    if (!cloudOn()) { cloudMsg('Saved on this device'); return; }
+    cloudMsg('Saving...'); clearTimeout(pushT); pushT = setTimeout(cloudPush, 1200);
   }
-  function saveMine() { var a = lsGet(LSW, {}); a[st.pid] = st.mine; lsSet(LSW, a); }
+  function cloudPush() {
+    clearTimeout(pushT); pushT = null;
+    if (!cloudOn() || !st.data) return Promise.resolve();
+    var pid = st.pid, payload = { stories: st.data.stories, del: st.data.del, mine: st.mine, t: Date.now() };
+    return root.WACloud.set('writer', pid, payload).then(function (ok) { cloudMsg(ok ? '☁️ Saved' : 'Saved here. Will sync when online.', ok ? '' : '#c2410c'); });
+  }
+  function cloudPull() {
+    if (!cloudOn()) { cloudMsg(st.pid === 'guest' ? 'Saved on this device' : 'Saved on this device'); return; }
+    var pid = st.pid; cloudMsg('Syncing...');
+    root.WACloud.get('writer', pid).then(function (rem) {
+      if (!st.ov || st.pid !== pid) return;
+      if (rem == null) { cloudMsg('Saved here. Will sync when online.', '#c2410c'); return; }
+      var curId = st.story && st.story.id, m = mergeData(st.data, rem);
+      var hasReal = m.stories.some(function (x) { return !emptyStory(x); });
+      if (hasReal) m.stories = m.stories.filter(function (x) { return !emptyStory(x) || x.id === curId; });
+      m.cur = curId; st.data = m; st.mine = m.mine;
+      var cur = m.stories.filter(function (x) { return x.id === curId; })[0];
+      if (!cur || (emptyStory(cur) && hasReal && st.view === 'write' && !st.reading)) { cur = m.stories.filter(function (x) { return !emptyStory(x); })[0] || m.stories[0] || newStory(); }
+      var changedCur = !st.story || cur.id !== st.story.id || JSON.stringify(cur.tiles) !== JSON.stringify(st.story.tiles) || cur.title !== st.story.title;
+      if (hasReal) m.stories = m.stories.filter(function (x) { return !emptyStory(x) || x.id === cur.id && !hasReal; });
+      st.story = cur; st.data.cur = cur.id; localSave();
+      if (st.view === 'write' && changedCur && !st.drag && !(doc.activeElement && doc.activeElement.id === 'ww-title')) writeView();
+      else if (st.view === 'write') refreshBank();
+      cloudPush();
+    });
+  }
+  function saveMine() { save(); }
 
   /* ---------- css ---------- */
   var CSS = '' +
@@ -156,7 +201,7 @@
     var s = st.story, n = wordTiles().length;
     paint(
       '<div class="ww-top"><button class="ww-btn" data-a="back" aria-label="Back">←</button><input class="ww-title" id="ww-title" maxlength="40" placeholder="My story title" value="' + esc(s.title) + '"><button class="ww-btn" data-a="list" title="My stories">📚</button><button class="ww-btn sun" data-a="new" title="New story">＋ New</button></div>' +
-      '<div class="ww-strip" id="ww-strip">' + stripHtml() + '</div>' +
+      '<div class="ww-note" id="ww-cloud" style="margin:0 0 6px;font-size:.8rem;text-align:right"></div><div class="ww-strip" id="ww-strip">' + stripHtml() + '</div>' +
       '<div class="ww-bar"><button class="ww-btn fun" data-a="read" id="ww-read"' + (canSpeak() ? '' : ' style="display:none"') + '>🔊 Read my story</button>' +
       '<button class="ww-btn" data-a="slow" id="ww-slow"' + (canSpeak() ? '' : ' style="display:none"') + '>' + (st.slow ? '🐢' : '🐇') + '</button>' +
       '<button class="ww-btn go" data-a="fix" id="ww-fix">🔍 Fix-it game</button>' +
@@ -166,6 +211,7 @@
       '<div class="ww-bar" style="margin-top:0">' + STARTERS.map(function (x, i) { return '<button class="ww-btn" data-a="starter" data-s="' + i + '">' + esc(x[0]) + '</button>'; }).join('') + '</div>' +
       '<div class="ww-tabs" id="ww-tabs">' + PACKS.map(function (p) { return '<button class="ww-tab' + (p.k === st.pack ? ' on' : '') + '" data-pack="' + p.k + '">' + p.t + '</button>'; }).join('') + '</div>' +
       '<div class="ww-bank" id="ww-bank">' + packHtml() + '</div>');
+    if (st.cm) cloudMsg(st.cm[0], st.cm[1]);
   }
   function refreshStrip() {
     var el = st.ov.querySelector('#ww-strip'); if (!el) return; el.innerHTML = stripHtml();
@@ -324,11 +370,11 @@
     m.addEventListener('click', function (e) {
       var o = e.target.closest('[data-o]'), d = e.target.closest('[data-d]');
       if (e.target === m || e.target.closest('[data-close]')) { m.remove(); return; }
-      if (o) { var s = st.data.stories.filter(function (x) { return x.id === o.getAttribute('data-o'); })[0]; if (s) { stopRead(); st.story = s; save(); m.remove(); st.view = 'write'; writeView(); } }
+      if (o) { var s = st.data.stories.filter(function (x) { return x.id === o.getAttribute('data-o'); })[0]; if (s) { stopRead(); st.story = s; st.data.cur = s.id; localSave(); m.remove(); st.view = 'write'; writeView(); } }
       if (d) {
         var id = d.getAttribute('data-d');
         if (sure !== id) { sure = id; d.textContent = 'Sure?'; d.classList.add('fun'); return; }
-        st.data.stories = st.data.stories.filter(function (x) { return x.id !== id; });
+        st.data.stories = st.data.stories.filter(function (x) { return x.id !== id; }); st.data.del[id] = Date.now();
         if (!st.data.stories.length) newStory();
         if (st.story.id === id) { st.story = st.data.stories[0]; }
         save(); sure = null; draw(); if (st.view === 'write') writeView();
@@ -387,10 +433,10 @@
     load();
     st.pack = /^(PS|PK|K|1)$/.test(String(prof && prof.gradeId || 'K')) || !prof ? 'first' : 'first';
     st.ov = doc.createElement('div'); st.ov.id = 'waw'; st.ov.setAttribute('role', 'dialog'); st.ov.setAttribute('aria-label', 'Writing station'); doc.body.appendChild(st.ov);
-    wire(); writeView();
+    wire(); writeView(); cloudPull();
   }
   function close() {
-    stopRead(); stopSay(); save();
+    stopRead(); stopSay(); if (st.story) { localSave(); if (pushT) cloudPush(); }
     doc.removeEventListener('pointermove', onMove); doc.removeEventListener('pointerup', onUp); doc.removeEventListener('pointercancel', onUp);
     if (st.drag && st.drag.ghost) st.drag.ghost.remove(); st.drag = null;
     if (st.ov) { st.ov.remove(); st.ov = null; }

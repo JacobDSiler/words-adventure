@@ -76,7 +76,28 @@
   /* ---------- progress ---------- */
   function pid() { return st.prof ? String(st.prof.id) : 'guest'; }
   function getProg() { var all = lsGet(LSK, {}); return all[pid()] || {}; }
-  function setProg(id, v) { var all = lsGet(LSK, {}); var p = all[pid()] || {}; p[id] = v; all[pid()] = p; lsSet(LSK, all); }
+  function setProg(id, v) { var all = lsGet(LSK, {}); var p = all[pid()] || {}; p[id] = v; all[pid()] = p; lsSet(LSK, all); cloudQueue(); }
+  /* cloud sync: finished stories, stars and the learner's own story text live in the family's Firebase document (via WACloud) */
+  var cTimer = null;
+  function cloudOn() { return !!(root.WACloud && root.WACloud.ok && root.WACloud.ok() && pid() !== 'guest'); }
+  function cloudQueue() { if (!cloudOn()) return; clearTimeout(cTimer); cTimer = setTimeout(cloudPush, 1500); }
+  function cloudPush() { clearTimeout(cTimer); cTimer = null; if (!cloudOn()) return; var id = pid(); root.WACloud.set('readers', id, { prog: getProg(), mine: lsGet(MYK, {})[id] || null, t: Date.now() }); }
+  function cloudPull() {
+    if (!cloudOn()) return; var id = pid();
+    root.WACloud.get('readers', id).then(function (rem) {
+      if (!rem || !st.ov || pid() !== id) return;
+      var all = lsGet(LSK, {}), loc = all[id] || {}, changed = false, k, r, l;
+      var rp = rem.prog || {};
+      for (k in rp) { r = rp[k]; l = loc[k]; if (!l) { loc[k] = r; changed = true; } else if ((r.done && !l.done) || (r.stars || 0) > (l.stars || 0)) { loc[k] = { done: (l.done || r.done) ? 1 : 0, stars: Math.max(l.stars || 0, r.stars || 0), t: Math.max(l.t || 0, r.t || 0) }; changed = true; } }
+      all[id] = loc; lsSet(LSK, all);
+      var m = lsGet(MYK, {}), lm = m[id];
+      if (rem.mine && (!lm || (rem.mine.t || 0) > (lm.t || 0))) { m[id] = rem.mine; lsSet(MYK, m); changed = true; }
+      var needPush = false; for (k in loc) if (!rp[k] || (loc[k].stars || 0) > (rp[k].stars || 0) || (loc[k].done && !rp[k].done)) needPush = true;
+      if (lm && (!rem.mine || (lm.t || 0) > (rem.mine.t || 0))) needPush = true;
+      if (changed && st.ov && st.ov.querySelector('.war-shelf')) library();
+      if (needPush) cloudPush();
+    });
+  }
   function nextUp(shelf) { var p = getProg(), l = inShelf(shelf); for (var i = 0; i < l.length; i++) if (!(p[l[i].id] && p[l[i].id].done)) return l[i].id; return null; }
 
   /* ---------- styles ---------- */
@@ -158,9 +179,10 @@
     st.ov = doc.createElement('div'); st.ov.className = 'war-ov'; st.ov.setAttribute('role', 'dialog'); st.ov.setAttribute('aria-label', 'Read');
     doc.body.appendChild(st.ov);
     doc.body.style.overflow = 'hidden';
-    library();
+    library(); cloudPull();
   }
   function close(quiet) {
+    if (cTimer) cloudPush();
     st.tok++; stopSay();
     if (st.ov && st.ov.parentNode) st.ov.parentNode.removeChild(st.ov);
     st.ov = null; if (!quiet) doc.body.style.overflow = '';
@@ -287,7 +309,7 @@
     });
     var ta = st.ov.querySelector('#war-mine');
     if (ta) {
-      ta.addEventListener('input', function () { var m = lsGet(MYK, {}); m[pid()] = { text: ta.value, t: Date.now() }; lsSet(MYK, m); });
+      ta.addEventListener('input', function () { var m = lsGet(MYK, {}); m[pid()] = { text: ta.value, t: Date.now() }; lsSet(MYK, m); cloudQueue(); });
       on('[data-st]', 'click', function () { var starters = ['Once upon a time, a new animal came to Hollybrook Wood. It was a ', 'One night at the old stump, something very silly happened. ', 'My story is about ']; ta.value = (ta.value ? ta.value + '\n' : '') + starters[+this.getAttribute('data-st')]; ta.focus(); ta.dispatchEvent(new Event('input')); });
     }
   }

@@ -179,8 +179,23 @@ const fbLoad=async(code,retries=3)=>{
 };
 const fbSave=async(code,data,merge=false)=>{
   if(!db||!code)return false;
-  try{await setDoc(doc(db,"families",code),{...data,ts:Date.now()},{merge});return true}
+  try{await setDoc(doc(db,"families",code),{...data,ts:Date.now()},{merge:true});return true}
   catch(e){console.warn("Firebase save failed:",e);return false}
+};
+// WACloud: per-learner data for the Write and Read tabs, stored inside the family document (families/{code}).
+// Field-path merge touches only that learner's entry and does not change ts, so the profile sync is unaffected.
+window.WACloud={
+  code:()=>{try{return localStorage.getItem("wordAdv_family")||""}catch{return ""}},
+  ok(){return !!(db&&this.code())},
+  async get(field,pid){
+    const code=this.code();if(!db||!code)return null;
+    for(let i=0;i<3;i++){try{const s=await getDoc(doc(db,"families",code));const d=s.exists()?s.data():null;return d&&d[field]&&d[field][pid]?d[field][pid]:{}}catch(e){if(i<2)await new Promise(r=>setTimeout(r,600*(i+1)))}}
+    return null;
+  },
+  async set(field,pid,val){
+    const code=this.code();if(!db||!code)return false;
+    try{await setDoc(doc(db,"families",code),{[field]:{[String(pid)]:val}},{merge:true});return true}catch(e){console.warn("WACloud save failed:",e);return false}
+  }
 };
 const fbSavePin=async(code,pin)=>{
   if(!db||!code)return;
